@@ -3,6 +3,7 @@
  * Run: railway run -s api npx tsx scripts/create-admin.ts [email] [displayName]
  */
 import { randomBytes } from "node:crypto";
+import { hashPassword } from "better-auth/crypto";
 import { auth } from "../src/lib/auth.js";
 import { prisma } from "../src/lib/prisma.js";
 
@@ -17,6 +18,9 @@ async function main() {
   const existing = await prisma.user.findUnique({ where: { email } });
 
   if (existing) {
+    const password = randomPassword();
+    const hashed = await hashPassword(password);
+
     await prisma.user.update({
       where: { email },
       data: {
@@ -25,15 +29,43 @@ async function main() {
         banned: false,
         banReason: null,
         banExpires: null,
+        name,
       },
     });
+
+    const credential = await prisma.account.findFirst({
+      where: { userId: existing.id, providerId: "credential" },
+    });
+
+    if (!credential) {
+      console.log(
+        JSON.stringify(
+          {
+            ok: true,
+            action: "promoted_existing_to_admin_no_credential_account",
+            email,
+            note: "User has no email/password account (credential). Use magic link or add a password in the DB.",
+          },
+          null,
+          2,
+        ),
+      );
+      return;
+    }
+
+    await prisma.account.update({
+      where: { id: credential.id },
+      data: { password: hashed },
+    });
+
     console.log(
       JSON.stringify(
         {
           ok: true,
-          action: "promoted_existing_to_admin",
+          action: "reset_password_and_promoted_admin",
           email,
-          note: "Password unchanged. Use your existing password, or magic link, or reset flow if needed.",
+          password,
+          note: "New password set. Store it securely; it is not saved anywhere else.",
         },
         null,
         2,
