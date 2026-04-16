@@ -23,8 +23,9 @@ model User {
   sessions         Session[]
   accounts         Account[]
   twofactors       TwoFactor[]
-  trips            Trip[]
-  bookingRequests  BookingRequest[]
+  trips             Trip[]
+  bookingRequests   BookingRequest[]
+  intakeSubmissions IntakeSubmission[]
 
   @@unique([email])
   @@map("user")
@@ -137,4 +138,65 @@ model BookingRequest {
 
   @@index([email])
   @@index([clientId])
+}
+
+/// Configurable trip intake: multiple forms, versioned definitions (JSON schema).
+model IntakeForm {
+  id          String              @id @default(cuid())
+  slug        String              @unique
+  name        String
+  description String?
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+  versions    IntakeFormVersion[]
+  submissions IntakeSubmission[]
+
+  @@map("intake_form")
+}
+
+model IntakeFormVersion {
+  id         String   @id @default(cuid())
+  formId     String
+  version    Int
+  label      String?
+  /// JSON: { version: 1, fields: FormField[] }
+  schema     Json
+  published  Boolean  @default(false)
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  form       IntakeForm @relation(fields: [formId], references: [id], onDelete: Cascade)
+  submissions IntakeSubmission[]
+
+  @@unique([formId, version])
+  @@index([formId])
+  @@map("intake_form_version")
+}
+
+enum IntakeSubmissionStatus {
+  NEW
+  IN_REVIEW
+  RESPONDED
+  CLOSED
+}
+
+model IntakeSubmission {
+  id            String                 @id @default(cuid())
+  formId        String
+  formVersionId String
+  email         String
+  status        IntakeSubmissionStatus @default(NEW)
+  /// Answers keyed by field id (JSON-serializable values).
+  responses     Json
+  clientId      String?
+  notes         String?
+  createdAt     DateTime               @default(now())
+  updatedAt     DateTime               @updatedAt
+  form          IntakeForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
+  formVersion   IntakeFormVersion      @relation(fields: [formVersionId], references: [id], onDelete: Cascade)
+  client        User?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+
+  @@index([formId])
+  @@index([email])
+  @@index([clientId])
+  @@map("intake_submission")
 }

@@ -4,6 +4,7 @@ import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
+import { publicIntakeRoutes } from "./routes/public-intake.js";
 
 function buildWebRequest(request: FastifyRequestLike): Request {
   const url = new URL(request.url, `http://${request.headers.host}`);
@@ -74,6 +75,7 @@ export async function buildApp() {
 
   await app.register(clientRoutes, { prefix: "/api/client" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
+  await app.register(publicIntakeRoutes, { prefix: "/api/public" });
 
   app.get("/health", async () => ({ ok: true, service: "momentella-api" }));
 
