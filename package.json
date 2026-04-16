@@ -11,7 +11,8 @@
     "postinstall": "prisma generate",
     "auth:generate": "npx auth@latest generate --config ./src/lib/auth.ts -y --output prisma/schema.prisma",
     "prisma:migrate": "prisma migrate deploy",
-    "prisma:studio": "prisma studio"
+    "prisma:studio": "prisma studio",
+    "admin:create": "tsx scripts/create-admin.ts"
   },
   "engines": {
     "node": ">=22"
