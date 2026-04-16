@@ -1,0 +1,88 @@
+import Fastify from "fastify";
+import cors from "@fastify/cors";
+import { fromNodeHeaders } from "better-auth/node";
+import { auth } from "./lib/auth.js";
+import { adminRoutes } from "./routes/admin.js";
+import { clientRoutes } from "./routes/client.js";
+
+function buildWebRequest(request: FastifyRequestLike): Request {
+  const url = new URL(request.url, `http://${request.headers.host}`);
+  const headers = fromNodeHeaders(request.headers);
+  let body: string | undefined;
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    if (typeof request.body === "string") {
+      body = request.body;
+    } else if (request.body !== undefined && request.body !== null) {
+      body = JSON.stringify(request.body);
+    }
+  }
+  return new Request(url.toString(), {
+    method: request.method,
+    headers,
+    body,
+  });
+}
+
+type FastifyRequestLike = {
+  url: string;
+  method: string;
+  headers: import("http").IncomingHttpHeaders;
+  body?: unknown;
+};
+
+export async function buildApp() {
+  const app = Fastify({
+    logger: { level: process.env.LOG_LEVEL ?? "info" },
+  });
+
+  await app.register(cors, {
+    origin: (origin, cb) => {
+      const allowed = [
+        process.env.CLIENT_APP_ORIGIN,
+        process.env.ADMIN_APP_ORIGIN,
+        process.env.BETTER_AUTH_URL,
+      ].filter(Boolean) as string[];
+      if (!origin || allowed.includes(origin)) {
+        cb(null, true);
+        return;
+      }
+      cb(null, false);
+    },
+    credentials: true,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization", "Cookie", "X-Requested-With"],
+  });
+
+  app.route({
+    method: ["GET", "POST"],
+    url: "/api/auth/*",
+    async handler(request, reply) {
+      try {
+        const req = buildWebRequest(request);
+        const response = await auth.handler(req);
+        reply.status(response.status);
+        response.headers.forEach((value, key) => {
+          reply.header(key, value);
+        });
+        reply.send(response.body ? await response.text() : null);
+      } catch (err) {
+        app.log.error({ err }, "auth handler");
+        reply.status(500).send({ error: "Authentication error" });
+      }
+    },
+  });
+
+  await app.register(clientRoutes, { prefix: "/api/client" });
+  await app.register(adminRoutes, { prefix: "/api/admin" });
+
+  app.get("/health", async () => ({ ok: true, service: "momentella-api" }));
+
+  return app;
+}
+
+const port = Number(process.env.PORT ?? 4000);
+const host = process.env.HOST ?? "0.0.0.0";
+
+const app = await buildApp();
+await app.listen({ port, host });
+app.log.info(`Listening on http://${host}:${port}`);
