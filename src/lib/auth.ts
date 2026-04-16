@@ -17,6 +17,8 @@ const trustedOrigins = [
   process.env.CLIENT_APP_ORIGIN,
   process.env.ADMIN_APP_ORIGIN,
   process.env.BETTER_AUTH_URL,
+  "http://localhost:3000",
+  "http://localhost:3015",
 ].filter((o): o is string => Boolean(o));
 
 export const auth = betterAuth({
@@ -24,6 +26,11 @@ export const auth = betterAuth({
   baseURL: requireEnv("BETTER_AUTH_URL"),
   basePath: "/api/auth",
   trustedOrigins: trustedOrigins.length ? trustedOrigins : ["http://localhost:4000"],
+  advanced: {
+    defaultCookieAttributes: {
+      sameSite: "lax",
+    },
+  },
   database: prismaAdapter(prisma, { provider: "postgresql" }),
   emailAndPassword: {
     enabled: true,
