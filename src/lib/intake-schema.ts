@@ -158,21 +158,18 @@ export function defaultFamilyTripSchema(): IntakeFormSchema {
       },
       {
         id: "destinations",
-        type: "multiselect",
+        type: "destination",
         label: "Destinations or regions of interest",
-        description: "Select all that apply — we’ll narrow together.",
-        options: [
-          { value: "western_europe", label: "Western Europe" },
-          { value: "mediterranean", label: "Mediterranean" },
-          { value: "uk_ireland", label: "UK & Ireland" },
-          { value: "caribbean", label: "Caribbean" },
-          { value: "central_america", label: "Central America" },
-          { value: "us_natl_parks", label: "US national parks" },
-          { value: "hawaii_alaska", label: "Hawaii / Alaska" },
-          { value: "asia_pacific", label: "Asia / Pacific" },
-          { value: "africa", label: "Africa" },
-          { value: "other", label: "Other (describe in notes)" },
-        ],
+        description:
+          "Start typing a country, city, park, or region — add as many as you like.",
+        allowMultiple: true,
+      },
+      {
+        id: "home_airport",
+        type: "airport",
+        label: "Home airport",
+        description:
+          "Type a city, airport name, or 3-letter code (e.g. DTW).",
       },
       {
         id: "date_flex",

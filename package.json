@@ -14,7 +14,8 @@
     "prisma:studio": "prisma studio",
     "admin:create": "tsx scripts/create-admin.ts",
     "seed:places": "tsx scripts/seed-places.ts",
-    "seed:pages": "tsx scripts/seed-pages.ts"
+    "seed:pages": "tsx scripts/seed-pages.ts",
+    "upgrade:family-trip-form": "tsx scripts/upgrade-family-trip-form.ts"
   },
   "engines": {
     "node": ">=22"
