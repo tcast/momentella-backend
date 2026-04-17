@@ -161,6 +161,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
             slug: body.slug!.trim(),
             name: body.name!.trim(),
             description: body.description?.trim() ?? null,
+            archived: false,
           },
         });
         await tx.intakeFormVersion.create({
@@ -180,12 +181,64 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
+  app.post("/intake-forms/:formId/duplicate", async (request, reply) => {
+    const { formId } = request.params as { formId: string };
+    const body = request.body as {
+      slug?: string;
+      name?: string;
+      description?: string;
+    };
+    if (!body.slug?.trim() || !body.name?.trim()) {
+      return reply.status(400).send({ error: "slug and name are required" });
+    }
+    if (!slugRe.test(body.slug)) {
+      return reply.status(400).send({ error: "invalid slug" });
+    }
+    const src = await prisma.intakeForm.findUnique({
+      where: { id: formId },
+      include: { versions: { orderBy: { version: "asc" } } },
+    });
+    if (!src) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const publishedVer = src.versions.find((v) => v.published);
+    try {
+      const newForm = await prisma.$transaction(async (tx) => {
+        const nf = await tx.intakeForm.create({
+          data: {
+            slug: body.slug!.trim(),
+            name: body.name!.trim(),
+            description: body.description?.trim() ?? null,
+            archived: false,
+          },
+        });
+        for (const ver of src.versions) {
+          await tx.intakeFormVersion.create({
+            data: {
+              formId: nf.id,
+              version: ver.version,
+              label: ver.label,
+              schema: ver.schema as object,
+              published:
+                !!publishedVer && ver.version === publishedVer.version,
+            },
+          });
+        }
+        return nf;
+      });
+      return reply.status(201).send({ form: newForm });
+    } catch {
+      return reply.status(409).send({ error: "Could not duplicate (slug taken?)" });
+    }
+  });
+
   app.patch("/intake-forms/:formId", async (request, reply) => {
     const { formId } = request.params as { formId: string };
     const body = request.body as {
       name?: string;
       description?: string | null;
       slug?: string;
+      archived?: boolean;
     };
     if (body.slug !== undefined && body.slug !== null && !slugRe.test(body.slug)) {
       return reply.status(400).send({ error: "invalid slug" });
@@ -197,6 +250,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           ...(body.name !== undefined ? { name: body.name } : {}),
           ...(body.description !== undefined ? { description: body.description } : {}),
           ...(body.slug !== undefined ? { slug: body.slug } : {}),
+          ...(body.archived !== undefined ? { archived: body.archived } : {}),
         },
       });
       return { form };
@@ -322,6 +376,26 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return { submissions };
+  });
+
+  app.get("/intake-submissions/:submissionId", async (request, reply) => {
+    const { submissionId } = request.params as { submissionId: string };
+    const row = await prisma.intakeSubmission.findUnique({
+      where: { id: submissionId },
+      include: {
+        form: { select: { id: true, name: true, slug: true } },
+        formVersion: true,
+        client: { select: { id: true, email: true, name: true } },
+      },
+    });
+    if (!row) {
+      return reply.status(404).send({ error: "Not found" });
+    }
+    const schema = parseIntakeFormSchema(row.formVersion.schema);
+    return {
+      submission: row,
+      schema,
+    };
   });
 
   app.patch("/intake-submissions/:submissionId", async (request, reply) => {

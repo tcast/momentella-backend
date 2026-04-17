@@ -1,7 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { prisma } from "../lib/prisma.js";
-import { getSession } from "../lib/request-session.js";
+import { summarizeIntakeResponses } from "../lib/intake-summary.js";
+import { sendIntakeNotificationEmail } from "../lib/notify-intake-email.js";
 import { parseIntakeFormSchema } from "../lib/intake-schema.js";
+import {
+  checkIntakeSubmitRateLimit,
+  clientIpFromRequest,
+} from "../lib/rate-limit-memory.js";
+import { getSession } from "../lib/request-session.js";
 import {
   sanitizeResponses,
   validateIntakeResponses,
@@ -16,8 +22,8 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     if (!slugRe.test(slug)) {
       return reply.status(400).send({ error: "Invalid slug" });
     }
-    const form = await prisma.intakeForm.findUnique({
-      where: { slug },
+    const form = await prisma.intakeForm.findFirst({
+      where: { slug, archived: false },
       include: {
         versions: {
           where: { published: true },
@@ -55,6 +61,7 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     if (!slugRe.test(slug)) {
       return reply.status(400).send({ error: "Invalid slug" });
     }
+
     const body = request.body as {
       email?: string;
       responses?: Record<string, unknown>;
@@ -71,8 +78,8 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: "responses object required" });
     }
 
-    const form = await prisma.intakeForm.findUnique({
-      where: { slug },
+    const form = await prisma.intakeForm.findFirst({
+      where: { slug, archived: false },
       include: {
         versions: {
           where: { published: true },
@@ -97,6 +104,18 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: err });
     }
 
+    const ip =
+      clientIpFromRequest(request.headers) ||
+      (request as { ip?: string }).ip ||
+      "unknown";
+    const rl = checkIntakeSubmitRateLimit(ip);
+    if (!rl.ok) {
+      return reply
+        .status(429)
+        .header("Retry-After", String(rl.retryAfterSec ?? 3600))
+        .send({ error: "Too many submissions. Please try again later." });
+    }
+
     const session = await getSession(request);
     const clientId = session?.user?.id ?? null;
 
@@ -108,6 +127,15 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
         responses: responses as object,
         clientId: clientId ?? undefined,
       },
+    });
+
+    const summaryLines = summarizeIntakeResponses(schema, responses);
+    void sendIntakeNotificationEmail({
+      formName: form.name,
+      formSlug: form.slug,
+      submitterEmail: email,
+      submissionId: row.id,
+      summaryLines,
     });
 
     return reply.status(201).send({
