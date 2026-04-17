@@ -4,6 +4,7 @@ import { prisma } from "../lib/prisma.js";
 import { summarizeIntakeResponses } from "../lib/intake-summary.js";
 import { sendIntakeNotificationEmail } from "../lib/notify-intake-email.js";
 import { parseIntakeFormSchema } from "../lib/intake-schema.js";
+import { parsePageSchema } from "../lib/page-schema.js";
 import {
   checkIntakeSubmitRateLimit,
   clientIpFromRequest,
@@ -52,6 +53,40 @@ function rankDestination(
 
 /** Public intake — no auth required; optional session links submission to user. */
 export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
+  app.get("/pages/:slug", async (request, reply) => {
+    const slug = (request.params as { slug: string }).slug;
+    if (!slugRe.test(slug)) {
+      return reply.status(400).send({ error: "Invalid slug" });
+    }
+    const page = await prisma.marketingPage.findFirst({
+      where: { slug, archived: false },
+      include: {
+        versions: {
+          where: { published: true },
+          take: 1,
+          orderBy: { version: "desc" },
+        },
+      },
+    });
+    if (!page || page.versions.length === 0) {
+      return reply.status(404).send({ error: "Page not found" });
+    }
+    const v = page.versions[0]!;
+    const schema = parsePageSchema(v.schema);
+    if (!schema) {
+      return reply.status(500).send({ error: "Invalid page definition" });
+    }
+    return {
+      page: {
+        id: page.id,
+        slug: page.slug,
+        name: page.name,
+        description: page.description,
+      },
+      version: { id: v.id, version: v.version, label: v.label, schema },
+    };
+  });
+
   app.get("/airports", async (request) => {
     const { q } = (request.query as { q?: string }) ?? {};
     const term = (q ?? "").trim();

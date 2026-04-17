@@ -7,6 +7,10 @@ import {
   FORM_SCHEMA_VERSION,
   parseIntakeFormSchema,
 } from "../lib/intake-schema.js";
+import {
+  PAGE_SCHEMA_VERSION,
+  parsePageSchema,
+} from "../lib/page-schema.js";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -667,4 +671,202 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(404).send({ error: "Not found" });
     }
   });
+
+  // -------------------------------------------------------------
+  // Marketing pages (homepage + any other marketing page).
+  // -------------------------------------------------------------
+  app.get("/pages", async () => {
+    const pages = await prisma.marketingPage.findMany({
+      orderBy: { updatedAt: "desc" },
+      include: {
+        versions: {
+          orderBy: { version: "desc" },
+          select: {
+            id: true,
+            version: true,
+            label: true,
+            published: true,
+            updatedAt: true,
+          },
+        },
+      },
+    });
+    return { pages };
+  });
+
+  app.get("/pages/:pageId", async (request, reply) => {
+    const { pageId } = request.params as { pageId: string };
+    const page = await prisma.marketingPage.findUnique({
+      where: { id: pageId },
+      include: { versions: { orderBy: { version: "desc" } } },
+    });
+    if (!page) return reply.status(404).send({ error: "Not found" });
+    return { page };
+  });
+
+  app.post("/pages", async (request, reply) => {
+    const body = request.body as {
+      slug?: string;
+      name?: string;
+      description?: string;
+    };
+    if (!body.slug?.trim() || !body.name?.trim()) {
+      return reply.status(400).send({ error: "slug and name are required" });
+    }
+    if (!slugRe.test(body.slug)) {
+      return reply
+        .status(400)
+        .send({ error: "slug: lowercase letters, numbers, hyphens only" });
+    }
+    try {
+      const page = await prisma.$transaction(async (tx) => {
+        const p = await tx.marketingPage.create({
+          data: {
+            slug: body.slug!.trim(),
+            name: body.name!.trim(),
+            description: body.description?.trim() ?? null,
+          },
+        });
+        await tx.marketingPageVersion.create({
+          data: {
+            pageId: p.id,
+            version: 1,
+            label: "v1",
+            schema: { version: PAGE_SCHEMA_VERSION, blocks: [] } as object,
+            published: true,
+          },
+        });
+        return p;
+      });
+      return reply.status(201).send({ page });
+    } catch {
+      return reply.status(409).send({ error: "slug already exists" });
+    }
+  });
+
+  app.patch("/pages/:pageId", async (request, reply) => {
+    const { pageId } = request.params as { pageId: string };
+    const body = request.body as {
+      name?: string;
+      description?: string | null;
+      slug?: string;
+      archived?: boolean;
+    };
+    if (body.slug !== undefined && !slugRe.test(body.slug)) {
+      return reply.status(400).send({ error: "invalid slug" });
+    }
+    try {
+      const page = await prisma.marketingPage.update({
+        where: { id: pageId },
+        data: {
+          ...(body.name !== undefined ? { name: body.name } : {}),
+          ...(body.description !== undefined
+            ? { description: body.description }
+            : {}),
+          ...(body.slug !== undefined ? { slug: body.slug } : {}),
+          ...(body.archived !== undefined ? { archived: body.archived } : {}),
+        },
+      });
+      return { page };
+    } catch {
+      return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  app.delete("/pages/:pageId", async (request, reply) => {
+    const { pageId } = request.params as { pageId: string };
+    try {
+      await prisma.marketingPage.delete({ where: { id: pageId } });
+      return { ok: true };
+    } catch {
+      return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  app.post("/pages/:pageId/versions", async (request, reply) => {
+    const { pageId } = request.params as { pageId: string };
+    const body = request.body as { label?: string; copyFromVersionId?: string };
+    const page = await prisma.marketingPage.findUnique({ where: { id: pageId } });
+    if (!page) return reply.status(404).send({ error: "Page not found" });
+    const max = await prisma.marketingPageVersion.aggregate({
+      where: { pageId },
+      _max: { version: true },
+    });
+    const nextV = (max._max.version ?? 0) + 1;
+    let schema: object;
+    if (body.copyFromVersionId) {
+      const src = await prisma.marketingPageVersion.findFirst({
+        where: { id: body.copyFromVersionId, pageId },
+      });
+      if (!src) return reply.status(400).send({ error: "Source version not found" });
+      schema = src.schema as object;
+    } else {
+      schema = { version: PAGE_SCHEMA_VERSION, blocks: [] } as object;
+    }
+    const version = await prisma.marketingPageVersion.create({
+      data: {
+        pageId,
+        version: nextV,
+        label: body.label?.trim() ?? `v${nextV}`,
+        schema,
+        published: false,
+      },
+    });
+    return reply.status(201).send({ version });
+  });
+
+  app.patch("/pages/:pageId/versions/:versionId", async (request, reply) => {
+    const { pageId, versionId } = request.params as {
+      pageId: string;
+      versionId: string;
+    };
+    const body = request.body as { schema?: unknown; label?: string | null };
+    const existing = await prisma.marketingPageVersion.findFirst({
+      where: { id: versionId, pageId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    if (body.schema !== undefined) {
+      const parsed = parsePageSchema(body.schema);
+      if (!parsed) return reply.status(400).send({ error: "Invalid schema" });
+      await prisma.marketingPageVersion.update({
+        where: { id: versionId },
+        data: { schema: parsed as object },
+      });
+    }
+    if (body.label !== undefined) {
+      await prisma.marketingPageVersion.update({
+        where: { id: versionId },
+        data: { label: body.label },
+      });
+    }
+    const version = await prisma.marketingPageVersion.findUnique({
+      where: { id: versionId },
+    });
+    return { version };
+  });
+
+  app.post(
+    "/pages/:pageId/versions/:versionId/publish",
+    async (request, reply) => {
+      const { pageId, versionId } = request.params as {
+        pageId: string;
+        versionId: string;
+      };
+      const v = await prisma.marketingPageVersion.findFirst({
+        where: { id: versionId, pageId },
+      });
+      if (!v) return reply.status(404).send({ error: "Not found" });
+      await prisma.$transaction([
+        prisma.marketingPageVersion.updateMany({
+          where: { pageId },
+          data: { published: false },
+        }),
+        prisma.marketingPageVersion.update({
+          where: { id: versionId },
+          data: { published: true },
+        }),
+      ]);
+      return { ok: true };
+    },
+  );
 };

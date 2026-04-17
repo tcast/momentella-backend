@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
+import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
 import { seedPlaces } from "./lib/seed-places.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
@@ -96,4 +97,12 @@ void seedPlaces()
   })
   .catch((err) => {
     app.log.error({ err }, "place seed failed — continuing anyway");
+  });
+
+void seedMarketingPages()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded marketing pages");
+  })
+  .catch((err) => {
+    app.log.error({ err }, "marketing page seed failed — continuing anyway");
   });

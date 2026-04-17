@@ -229,6 +229,37 @@ model Destination {
   @@map("destination")
 }
 
+/// Editable marketing pages (home + additional). Versioned JSON block list. Slug `home` drives `/`.
+model MarketingPage {
+  id          String                 @id @default(cuid())
+  slug        String                 @unique
+  name        String
+  description String?
+  archived    Boolean                @default(false)
+  createdAt   DateTime               @default(now())
+  updatedAt   DateTime               @updatedAt
+  versions    MarketingPageVersion[]
+
+  @@map("marketing_page")
+}
+
+model MarketingPageVersion {
+  id        String        @id @default(cuid())
+  pageId    String
+  version   Int
+  label     String?
+  /// JSON: { version: 1, blocks: PageBlock[] }
+  schema    Json
+  published Boolean       @default(false)
+  createdAt DateTime      @default(now())
+  updatedAt DateTime      @updatedAt
+  page      MarketingPage @relation(fields: [pageId], references: [id], onDelete: Cascade)
+
+  @@unique([pageId, version])
+  @@index([pageId])
+  @@map("marketing_page_version")
+}
+
 model IntakeSubmission {
   id            String                 @id @default(cuid())
   formId        String
