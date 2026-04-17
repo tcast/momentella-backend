@@ -180,6 +180,55 @@ enum IntakeSubmissionStatus {
   CLOSED
 }
 
+/// Commercial airports — used by the `airport` intake field.
+model Airport {
+  id          String   @id @default(cuid())
+  iata        String   @unique
+  icao        String?
+  name        String
+  city        String
+  region      String?
+  country     String
+  countryCode String
+  active      Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([active])
+  @@index([city])
+  @@index([country])
+  @@map("airport")
+}
+
+enum DestinationType {
+  COUNTRY
+  REGION
+  CITY
+  AREA
+  PARK
+  RESORT
+  VENUE
+}
+
+/// Trip destinations — used by the `destination` intake field.
+model Destination {
+  id        String          @id @default(cuid())
+  slug      String          @unique
+  name      String
+  type      DestinationType
+  country   String?
+  region    String?
+  aliases   String?
+  active    Boolean         @default(true)
+  createdAt DateTime        @default(now())
+  updatedAt DateTime        @updatedAt
+
+  @@index([type])
+  @@index([country])
+  @@index([active])
+  @@map("destination")
+}
+
 model IntakeSubmission {
   id            String                 @id @default(cuid())
   formId        String

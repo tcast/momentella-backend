@@ -30,6 +30,26 @@ function formatFieldLine(field: FormField, val: unknown): string | null {
     }
     return s;
   }
+  if (field.type === "airport" && val && typeof val === "object") {
+    const a = val as Record<string, unknown>;
+    const iata = typeof a.iata === "string" ? a.iata : "";
+    const name = typeof a.name === "string" ? a.name : "";
+    const city = typeof a.city === "string" ? a.city : "";
+    return `${field.label}: ${iata ? iata + " — " : ""}${name}${city ? ` (${city})` : ""}`;
+  }
+  if (field.type === "destination") {
+    const fmt = (v: unknown): string => {
+      if (!v || typeof v !== "object") return String(v);
+      const o = v as Record<string, unknown>;
+      const name = typeof o.name === "string" ? o.name : "";
+      const country = typeof o.country === "string" ? o.country : "";
+      return country && !name.includes(country) ? `${name} (${country})` : name;
+    };
+    if (field.allowMultiple && Array.isArray(val)) {
+      return `${field.label}: ${val.map(fmt).filter(Boolean).join(", ")}`;
+    }
+    return `${field.label}: ${fmt(val)}`;
+  }
   if (field.type === "multiselect" && Array.isArray(val)) {
     const labels = val.map((v) => {
       const opt = field.options.find((o) => o.value === v);

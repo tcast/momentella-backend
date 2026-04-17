@@ -113,6 +113,39 @@ export function validateIntakeResponses(
         }
         break;
       }
+      case "airport": {
+        if (typeof val !== "object" || val === null || Array.isArray(val)) {
+          return `${field.label}: please pick an airport from the list`;
+        }
+        const o = val as Record<string, unknown>;
+        if (typeof o.id !== "string" || typeof o.iata !== "string") {
+          return `${field.label}: please pick an airport from the list`;
+        }
+        break;
+      }
+      case "destination": {
+        const checkOne = (v: unknown): string | null => {
+          if (typeof v !== "object" || v === null || Array.isArray(v)) {
+            return `${field.label}: please pick from the list`;
+          }
+          const o = v as Record<string, unknown>;
+          if (typeof o.id !== "string" || typeof o.slug !== "string") {
+            return `${field.label}: please pick from the list`;
+          }
+          return null;
+        };
+        if (field.allowMultiple) {
+          if (!Array.isArray(val)) return `${field.label}: expected a list`;
+          for (const item of val) {
+            const err = checkOne(item);
+            if (err) return err;
+          }
+        } else {
+          const err = checkOne(val);
+          if (err) return err;
+        }
+        break;
+      }
       default: {
         const _exhaustive: never = field as never;
         return _exhaustive;

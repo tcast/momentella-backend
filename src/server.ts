@@ -2,6 +2,7 @@ import Fastify from "fastify";
 import cors from "@fastify/cors";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
+import { seedPlaces } from "./lib/seed-places.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicIntakeRoutes } from "./routes/public-intake.js";
@@ -88,3 +89,11 @@ const host = process.env.HOST ?? "0.0.0.0";
 const app = await buildApp();
 await app.listen({ port, host });
 app.log.info(`Listening on http://${host}:${port}`);
+
+void seedPlaces()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded airports + destinations");
+  })
+  .catch((err) => {
+    app.log.error({ err }, "place seed failed — continuing anyway");
+  });
