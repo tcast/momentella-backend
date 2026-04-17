@@ -11,7 +11,8 @@ export type PageBlockType =
   | "cta_split"
   | "rich_text"
   | "image"
-  | "spacer";
+  | "spacer"
+  | "intake_form";
 
 export interface CtaLink {
   label: string;
@@ -109,6 +110,15 @@ export interface SpacerBlock extends Base {
   size: "small" | "medium" | "large";
 }
 
+/** Renders the currently-published version of an intake form by slug. */
+export interface IntakeFormBlock extends Base {
+  type: "intake_form";
+  slug: string;
+  eyebrow?: string;
+  title?: string;
+  body?: string;
+}
+
 export type PageBlock =
   | HeroBlock
   | EditorialIntroBlock
@@ -118,7 +128,8 @@ export type PageBlock =
   | CtaSplitBlock
   | RichTextBlock
   | ImageBlock
-  | SpacerBlock;
+  | SpacerBlock
+  | IntakeFormBlock;
 
 export interface PageSchema {
   version: typeof PAGE_SCHEMA_VERSION;
@@ -135,6 +146,7 @@ const VALID_TYPES: ReadonlySet<string> = new Set<PageBlockType>([
   "rich_text",
   "image",
   "spacer",
+  "intake_form",
 ]);
 
 /**
@@ -180,7 +192,7 @@ export function defaultHomePageSchema(): PageSchema {
         headline: "The world, beautifully planned—",
         headlineMuted: "with little travelers in mind.",
         body: "Higher-end itineraries, calmer logistics, and room for wonder. We design trips that feel elevated for parents and magical for kids.",
-        primaryCta: { label: "Start a conversation", href: "/#contact" },
+        primaryCta: { label: "Start a conversation", href: "/connect" },
         secondaryCta: { label: "Our philosophy", href: "/#approach" },
         height: "tall",
       },
@@ -289,6 +301,40 @@ export function defaultHomePageSchema(): PageSchema {
           label: "@momentella.travel",
           href: "https://www.instagram.com/momentella.travel/",
         },
+      },
+    ],
+  };
+}
+
+/**
+ * Seed content for the `/connect` page. Embeds the intake form keyed by slug
+ * (defaults to `family-trip` — the admin can switch forms in the page builder).
+ */
+export function defaultConnectPageSchema(
+  formSlug = "family-trip",
+): PageSchema {
+  return {
+    version: PAGE_SCHEMA_VERSION,
+    blocks: [
+      {
+        id: uid("hero"),
+        type: "hero",
+        imageUrl:
+          "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=2000&q=80",
+        imageAlt: "Family looking at a travel map together",
+        eyebrow: "Let’s plan your trip",
+        headline: "Tell us about your family—",
+        headlineMuted: "and the trip you have in mind.",
+        body: "We’ll respond within a business day with next steps and a call invite if it’s a fit.",
+        height: "short",
+      },
+      {
+        id: uid("form"),
+        type: "intake_form",
+        slug: formSlug,
+        eyebrow: "Trip intake",
+        title: "A few details to get started",
+        body: "Nothing here is set in stone. Share what you know and we’ll fill in the rest together.",
       },
     ],
   };
