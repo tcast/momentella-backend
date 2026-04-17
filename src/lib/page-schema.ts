@@ -180,8 +180,8 @@ export function defaultHomePageSchema(): PageSchema {
         headline: "The world, beautifully planned—",
         headlineMuted: "with little travelers in mind.",
         body: "Higher-end itineraries, calmer logistics, and room for wonder. We design trips that feel elevated for parents and magical for kids.",
-        primaryCta: { label: "Start a conversation", href: "#contact" },
-        secondaryCta: { label: "Our philosophy", href: "#approach" },
+        primaryCta: { label: "Start a conversation", href: "/#contact" },
+        secondaryCta: { label: "Our philosophy", href: "/#approach" },
         height: "tall",
       },
       {
