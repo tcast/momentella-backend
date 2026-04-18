@@ -269,15 +269,34 @@ model IntakeSubmission {
   /// Answers keyed by field id (JSON-serializable values).
   responses     Json
   clientId      String?
+  /// @deprecated — legacy single-note column; see `notesThread`.
   notes         String?
   createdAt     DateTime               @default(now())
   updatedAt     DateTime               @updatedAt
   form          IntakeForm             @relation(fields: [formId], references: [id], onDelete: Cascade)
   formVersion   IntakeFormVersion      @relation(fields: [formVersionId], references: [id], onDelete: Cascade)
   client        User?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
+  notesThread   IntakeSubmissionNote[]
 
   @@index([formId])
   @@index([email])
   @@index([clientId])
   @@map("intake_submission")
+}
+
+/// Timestamped notes on a submission (internal CRM log). Many per submission.
+model IntakeSubmissionNote {
+  id           String           @id @default(cuid())
+  submissionId String
+  /// Admin user who wrote the note. Nullable so deleting the user doesn't
+  /// erase the history; `authorName` preserves attribution.
+  authorId     String?
+  authorName   String?
+  body         String
+  createdAt    DateTime         @default(now())
+  updatedAt    DateTime         @updatedAt
+  submission   IntakeSubmission @relation(fields: [submissionId], references: [id], onDelete: Cascade)
+
+  @@index([submissionId])
+  @@map("intake_submission_note")
 }

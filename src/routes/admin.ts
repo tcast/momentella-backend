@@ -450,6 +450,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         form: { select: { id: true, name: true, slug: true } },
         formVersion: true,
         client: { select: { id: true, email: true, name: true } },
+        notesThread: {
+          orderBy: { createdAt: "desc" },
+        },
       },
     });
     if (!row) {
@@ -461,6 +464,69 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       schema,
     };
   });
+
+  // --- Notes thread ------------------------------------------------------
+
+  app.post("/intake-submissions/:submissionId/notes", async (request, reply) => {
+    const { submissionId } = request.params as { submissionId: string };
+    const body = request.body as { body?: string };
+    const text = (body.body ?? "").trim();
+    if (!text) return reply.status(400).send({ error: "Note cannot be empty" });
+    const sub = await prisma.intakeSubmission.findUnique({
+      where: { id: submissionId },
+      select: { id: true },
+    });
+    if (!sub) return reply.status(404).send({ error: "Submission not found" });
+    // preHandler guarantees adminSession is set for this route group.
+    const author = request.adminSession!.user;
+    const note = await prisma.intakeSubmissionNote.create({
+      data: {
+        submissionId,
+        authorId: author.id,
+        authorName: author.name ?? author.email,
+        body: text,
+      },
+    });
+    return reply.status(201).send({ note });
+  });
+
+  app.patch(
+    "/intake-submissions/:submissionId/notes/:noteId",
+    async (request, reply) => {
+      const { submissionId, noteId } = request.params as {
+        submissionId: string;
+        noteId: string;
+      };
+      const body = request.body as { body?: string };
+      const text = (body.body ?? "").trim();
+      if (!text) return reply.status(400).send({ error: "Note cannot be empty" });
+      const existing = await prisma.intakeSubmissionNote.findFirst({
+        where: { id: noteId, submissionId },
+      });
+      if (!existing) return reply.status(404).send({ error: "Not found" });
+      const note = await prisma.intakeSubmissionNote.update({
+        where: { id: noteId },
+        data: { body: text },
+      });
+      return { note };
+    },
+  );
+
+  app.delete(
+    "/intake-submissions/:submissionId/notes/:noteId",
+    async (request, reply) => {
+      const { submissionId, noteId } = request.params as {
+        submissionId: string;
+        noteId: string;
+      };
+      const existing = await prisma.intakeSubmissionNote.findFirst({
+        where: { id: noteId, submissionId },
+      });
+      if (!existing) return reply.status(404).send({ error: "Not found" });
+      await prisma.intakeSubmissionNote.delete({ where: { id: noteId } });
+      return { ok: true };
+    },
+  );
 
   app.patch("/intake-submissions/:submissionId", async (request, reply) => {
     const { submissionId } = request.params as { submissionId: string };
