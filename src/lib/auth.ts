@@ -13,10 +13,17 @@ function requireEnv(name: string): string {
   return v;
 }
 
+/** Comma-separated extra origins for custom domains / fallbacks. */
+const extraTrusted = (process.env.TRUSTED_ORIGINS ?? "")
+  .split(",")
+  .map((s) => s.trim())
+  .filter(Boolean);
+
 const trustedOrigins = [
   process.env.CLIENT_APP_ORIGIN,
   process.env.ADMIN_APP_ORIGIN,
   process.env.BETTER_AUTH_URL,
+  ...extraTrusted,
   "http://localhost:3000",
   "http://localhost:3015",
 ].filter((o): o is string => Boolean(o));

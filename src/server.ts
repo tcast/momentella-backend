@@ -40,10 +40,15 @@ export async function buildApp() {
 
   await app.register(cors, {
     origin: (origin, cb) => {
+      const extra = (process.env.TRUSTED_ORIGINS ?? "")
+        .split(",")
+        .map((s) => s.trim())
+        .filter(Boolean);
       const allowed = [
         process.env.CLIENT_APP_ORIGIN,
         process.env.ADMIN_APP_ORIGIN,
         process.env.BETTER_AUTH_URL,
+        ...extra,
       ].filter(Boolean) as string[];
       if (!origin || allowed.includes(origin)) {
         cb(null, true);
