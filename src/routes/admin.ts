@@ -70,6 +70,46 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { users: rows };
   });
 
+  app.patch("/users/:userId", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const body = request.body as { name?: string; email?: string };
+    const target = await prisma.user.findUnique({ where: { id: userId } });
+    if (!target) {
+      return reply.status(404).send({ error: "User not found" });
+    }
+    const data: { name?: string; email?: string } = {};
+    if (body.name !== undefined) {
+      const n = body.name.trim();
+      if (!n) {
+        return reply.status(400).send({ error: "Name cannot be empty" });
+      }
+      data.name = n;
+    }
+    if (body.email !== undefined) {
+      const e = body.email.trim().toLowerCase();
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(e)) {
+        return reply.status(400).send({ error: "Invalid email" });
+      }
+      data.email = e;
+    }
+    if (Object.keys(data).length === 0) {
+      return reply.status(400).send({ error: "Nothing to update" });
+    }
+    try {
+      const user = await prisma.user.update({ where: { id: userId }, data });
+      return {
+        user: {
+          id: user.id,
+          name: user.name,
+          email: user.email,
+          role: user.role,
+        },
+      };
+    } catch {
+      return reply.status(409).send({ error: "Email already in use" });
+    }
+  });
+
   app.patch("/users/:userId/role", async (request, reply) => {
     const { userId } = request.params as { userId: string };
     const body = request.body as { role?: string };
