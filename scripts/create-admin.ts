@@ -1,6 +1,12 @@
 /**
  * Bootstrap or promote an admin user (email + password credential).
- * Run: railway run -s api npx tsx scripts/create-admin.ts [email] [displayName]
+ *
+ * Run (random password):
+ *   railway run -s api npx tsx scripts/create-admin.ts [email] [displayName]
+ *
+ * Run (explicit password, avoid shell history leaks):
+ *   ADMIN_PASSWORD='S3cret!' railway run -s api \
+ *     npx tsx scripts/create-admin.ts [email] [displayName]
  */
 import { randomBytes } from "node:crypto";
 import { hashPassword } from "better-auth/crypto";
@@ -9,16 +15,21 @@ import { prisma } from "../src/lib/prisma.js";
 
 const email = (process.argv[2] ?? "tcast@att.net").toLowerCase();
 const name = process.argv[3] ?? "Momentella Admin";
+const explicitPassword = process.env.ADMIN_PASSWORD?.trim() || null;
 
 function randomPassword(): string {
   return `${randomBytes(14).toString("base64url")}Aa1!`;
+}
+
+function pickPassword(): string {
+  return explicitPassword ?? randomPassword();
 }
 
 async function main() {
   const existing = await prisma.user.findUnique({ where: { email } });
 
   if (existing) {
-    const password = randomPassword();
+    const password = pickPassword();
     const hashed = await hashPassword(password);
 
     await prisma.user.update({
@@ -74,7 +85,7 @@ async function main() {
     return;
   }
 
-  const password = randomPassword();
+  const password = pickPassword();
 
   const res = await auth.api.signUpEmail({
     body: { email, name, password },
