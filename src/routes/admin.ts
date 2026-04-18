@@ -7,6 +7,7 @@ import {
   FORM_SCHEMA_VERSION,
   parseIntakeFormSchema,
 } from "../lib/intake-schema.js";
+import { buildListPreview } from "../lib/intake-summary.js";
 import {
   PAGE_SCHEMA_VERSION,
   parsePageSchema,
@@ -410,14 +411,33 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.get("/intake-submissions", async (request) => {
     const q = request.query as { formId?: string; take?: string };
     const take = Math.min(200, Math.max(1, Number(q.take) || 80));
-    const submissions = await prisma.intakeSubmission.findMany({
+    const rows = await prisma.intakeSubmission.findMany({
       where: q.formId ? { formId: q.formId } : undefined,
       orderBy: { createdAt: "desc" },
       take,
       include: {
         form: { select: { name: true, slug: true } },
-        formVersion: { select: { version: true, label: true } },
+        formVersion: {
+          select: { version: true, label: true, schema: true },
+        },
       },
+    });
+    const submissions = rows.map((r) => {
+      const schema = parseIntakeFormSchema(r.formVersion.schema);
+      const responses = (r.responses ?? {}) as Record<string, unknown>;
+      return {
+        id: r.id,
+        email: r.email,
+        status: r.status,
+        notes: r.notes,
+        createdAt: r.createdAt,
+        form: r.form,
+        formVersion: {
+          version: r.formVersion.version,
+          label: r.formVersion.label,
+        },
+        preview: buildListPreview(schema, responses),
+      };
     });
     return { submissions };
   });
