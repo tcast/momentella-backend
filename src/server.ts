@@ -1,5 +1,6 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
+import multipart from "@fastify/multipart";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
@@ -7,6 +8,8 @@ import { seedPlaces } from "./lib/seed-places.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicIntakeRoutes } from "./routes/public-intake.js";
+
+const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB hard ceiling at the parser
 
 function buildWebRequest(request: FastifyRequestLike): Request {
   const url = new URL(request.url, `http://${request.headers.host}`);
@@ -36,6 +39,14 @@ type FastifyRequestLike = {
 export async function buildApp() {
   const app = Fastify({
     logger: { level: process.env.LOG_LEVEL ?? "info" },
+  });
+
+  await app.register(multipart, {
+    limits: {
+      fileSize: MAX_UPLOAD_BYTES,
+      files: 1,
+      fields: 4,
+    },
   });
 
   await app.register(cors, {

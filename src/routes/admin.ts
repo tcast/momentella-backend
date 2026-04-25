@@ -12,6 +12,11 @@ import {
   PAGE_SCHEMA_VERSION,
   parsePageSchema,
 } from "../lib/page-schema.js";
+import {
+  ObjectStorageNotConfigured,
+  isObjectStorageConfigured,
+  putObject,
+} from "../lib/object-storage.js";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -795,6 +800,76 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       return { ok: true };
     } catch {
       return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  // -------------------------------------------------------------
+  // File uploads (images for the page builder, etc.).
+  // -------------------------------------------------------------
+  const ALLOWED_IMAGE_TYPES = new Set([
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "image/svg+xml",
+  ]);
+  const MAX_IMAGE_BYTES = 8 * 1024 * 1024; // 8 MB after multipart limit (10 MB)
+
+  app.get("/uploads/status", async () => ({
+    configured: isObjectStorageConfigured(),
+  }));
+
+  app.post("/uploads/image", async (request, reply) => {
+    if (!isObjectStorageConfigured()) {
+      return reply.status(503).send({
+        error:
+          "Image uploads aren't set up yet. Ask your developer to configure object storage (S3 / R2).",
+      });
+    }
+    let part;
+    try {
+      part = await request.file();
+    } catch (err) {
+      app.log.warn({ err }, "multipart parse failed");
+      return reply.status(400).send({ error: "Invalid upload" });
+    }
+    if (!part) {
+      return reply.status(400).send({ error: "No file in request" });
+    }
+    const contentType = part.mimetype;
+    if (!ALLOWED_IMAGE_TYPES.has(contentType)) {
+      return reply.status(415).send({
+        error: `Unsupported file type (${contentType || "unknown"}). Allowed: JPG, PNG, WebP, GIF, SVG.`,
+      });
+    }
+    const buf = await part.toBuffer();
+    if (buf.length === 0) {
+      return reply.status(400).send({ error: "Empty file" });
+    }
+    if (buf.length > MAX_IMAGE_BYTES) {
+      return reply.status(413).send({
+        error: `File is too large (${(buf.length / 1024 / 1024).toFixed(1)} MB). Max 8 MB.`,
+      });
+    }
+    try {
+      const result = await putObject({
+        body: buf,
+        contentType,
+        filename: part.filename || "upload",
+        prefix: "pages",
+      });
+      return reply.status(201).send({
+        url: result.url,
+        key: result.key,
+        bytes: result.bytes,
+        contentType: result.contentType,
+      });
+    } catch (err) {
+      if (err instanceof ObjectStorageNotConfigured) {
+        return reply.status(503).send({ error: err.message });
+      }
+      app.log.error({ err }, "upload failed");
+      return reply.status(500).send({ error: "Upload failed" });
     }
   });
 
