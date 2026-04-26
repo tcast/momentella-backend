@@ -18,6 +18,7 @@ import {
   putObject,
 } from "../lib/object-storage.js";
 import { convertIntakeToTrip } from "../lib/intake-to-trip.js";
+import { parseItinerarySchema } from "../lib/itinerary-schema.js";
 import { TripKind, TripStatus } from "@prisma/client";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -252,6 +253,31 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     if (!existing) return reply.status(404).send({ error: "Not found" });
     await prisma.tripNote.delete({ where: { id: noteId } });
     return { ok: true };
+  });
+
+  // Itinerary: a single JSON document per trip (one current draft).
+  app.put("/trips/:tripId/itinerary", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as { schema?: unknown };
+    const parsed = parseItinerarySchema(body.schema);
+    if (!parsed) {
+      return reply.status(400).send({ error: "Invalid itinerary schema" });
+    }
+    const exists = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { id: true },
+    });
+    if (!exists) return reply.status(404).send({ error: "Trip not found" });
+    const trip = await prisma.trip.update({
+      where: { id: tripId },
+      data: { itinerarySchema: parsed as object },
+      select: {
+        id: true,
+        itinerarySchema: true,
+        updatedAt: true,
+      },
+    });
+    return { trip };
   });
 
   // Convert an intake submission into a trip (idempotent).

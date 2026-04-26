@@ -156,6 +156,10 @@ model Trip {
   budgetTier      String?
   /// JSON array of {id, slug, name, type, country, region}.
   destinations    Json?
+  /// Day-by-day itinerary as a versioned JSON document. Phase-2 schema
+  /// shape lives in `lib/itinerary-schema.ts` on the frontend (mirrored
+  /// types on the backend). Null until an admin builds one.
+  itinerarySchema Json?
 
   // One-to-one back-pointer to the intake submission this trip came from.
   originIntakeSubmissionId String?           @unique

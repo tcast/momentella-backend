@@ -30,6 +30,17 @@ export const clientRoutes: FastifyPluginAsync = async (app) => {
     return { trips };
   });
 
+  app.get("/trips/:tripId", async (request, reply) => {
+    const userId = request.clientSession!.user.id;
+    const { tripId } = request.params as { tripId: string };
+    const trip = await prisma.trip.findFirst({
+      where: { id: tripId, clientId: userId },
+    });
+    if (!trip) return reply.status(404).send({ error: "Not found" });
+    // Notes are internal — never sent to the client.
+    return { trip };
+  });
+
   app.get("/booking-requests", async (request) => {
     const userId = request.clientSession!.user.id;
     const requests = await prisma.bookingRequest.findMany({
