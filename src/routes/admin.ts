@@ -19,7 +19,11 @@ import {
 } from "../lib/object-storage.js";
 import { convertIntakeToTrip } from "../lib/intake-to-trip.js";
 import { parseItinerarySchema } from "../lib/itinerary-schema.js";
-import { TripKind, TripStatus } from "@prisma/client";
+import {
+  PROPOSAL_SCHEMA_VERSION,
+  type ProposalSchema,
+} from "../lib/proposal-schema.js";
+import { ProposalStatus, TripKind, TripStatus } from "@prisma/client";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -95,6 +99,22 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           select: { id: true, formId: true, createdAt: true, email: true },
         },
         notes: { orderBy: { createdAt: "desc" } },
+        proposals: {
+          orderBy: { version: "desc" },
+          select: {
+            id: true,
+            version: true,
+            status: true,
+            message: true,
+            publishedByName: true,
+            respondedAt: true,
+            responderName: true,
+            responseNote: true,
+            createdAt: true,
+            updatedAt: true,
+          },
+        },
+        messages: { orderBy: { createdAt: "asc" } },
       },
     });
     if (!trip) return reply.status(404).send({ error: "Not found" });
@@ -278,6 +298,159 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return { trip };
+  });
+
+  // ── Proposals ─────────────────────────────────────────────────────────
+  app.get("/trips/:tripId/proposals/:proposalId", async (request, reply) => {
+    const { tripId, proposalId } = request.params as {
+      tripId: string;
+      proposalId: string;
+    };
+    const proposal = await prisma.proposal.findFirst({
+      where: { id: proposalId, tripId },
+    });
+    if (!proposal) return reply.status(404).send({ error: "Not found" });
+    return { proposal };
+  });
+
+  app.post("/trips/:tripId/proposals", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as { message?: string };
+    const trip = await prisma.trip.findUnique({ where: { id: tripId } });
+    if (!trip) return reply.status(404).send({ error: "Trip not found" });
+    const itinerary = parseItinerarySchema(trip.itinerarySchema);
+    if (!itinerary) {
+      return reply.status(400).send({
+        error:
+          "Build an itinerary first — there's nothing to publish yet.",
+      });
+    }
+
+    const max = await prisma.proposal.aggregate({
+      where: { tripId },
+      _max: { version: true },
+    });
+    const nextVersion = (max._max.version ?? 0) + 1;
+
+    const author = request.adminSession!.user;
+    const snapshot: ProposalSchema = {
+      version: PROPOSAL_SCHEMA_VERSION,
+      trip: {
+        title: trip.title,
+        kind: trip.kind,
+        status: trip.status,
+        destination: trip.destination,
+        destinations: (trip.destinations as unknown[]) ?? null,
+        startsOn: trip.startsOn ? trip.startsOn.toISOString() : null,
+        endsOn: trip.endsOn ? trip.endsOn.toISOString() : null,
+        homeAirportIata: trip.homeAirportIata,
+        partyAdults: trip.partyAdults,
+        partyChildren: trip.partyChildren,
+        partyChildAges: (trip.partyChildAges as number[] | null) ?? null,
+        budgetTier: trip.budgetTier,
+        summary: trip.summary,
+      },
+      itinerary,
+    };
+
+    const messageText = body.message?.trim() || null;
+
+    const proposal = await prisma.$transaction(async (tx) => {
+      const p = await tx.proposal.create({
+        data: {
+          tripId,
+          version: nextVersion,
+          schema: snapshot as unknown as object,
+          status: ProposalStatus.SENT,
+          message: messageText,
+          publishedById: author.id,
+          publishedByName: author.name ?? author.email,
+        },
+      });
+      // Move the trip into PROPOSED if it's still in early stages.
+      const advance =
+        trip.status === TripStatus.LEAD ||
+        trip.status === TripStatus.PLANNING ||
+        trip.status === TripStatus.DRAFT;
+      if (advance) {
+        await tx.trip.update({
+          where: { id: tripId },
+          data: { status: TripStatus.PROPOSED },
+        });
+      }
+      // If the admin's publish message is non-empty, store it as a system
+      // message on the thread so the client sees it.
+      if (messageText) {
+        await tx.tripMessage.create({
+          data: {
+            tripId,
+            authorId: author.id,
+            authorName: author.name ?? author.email,
+            authorRole: "admin",
+            body: `[v${nextVersion} published] ${messageText}`,
+          },
+        });
+      }
+      return p;
+    });
+    return reply.status(201).send({ proposal });
+  });
+
+  app.patch("/trips/:tripId/proposals/:proposalId", async (request, reply) => {
+    const { tripId, proposalId } = request.params as {
+      tripId: string;
+      proposalId: string;
+    };
+    const body = request.body as { status?: string };
+    if (
+      body.status === undefined ||
+      !(Object.values(ProposalStatus) as string[]).includes(body.status)
+    ) {
+      return reply.status(400).send({ error: "invalid status" });
+    }
+    const existing = await prisma.proposal.findFirst({
+      where: { id: proposalId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    const proposal = await prisma.proposal.update({
+      where: { id: proposalId },
+      data: { status: body.status as ProposalStatus },
+    });
+    return { proposal };
+  });
+
+  // ── Trip messages ─────────────────────────────────────────────────────
+  app.get("/trips/:tripId/messages", async (request) => {
+    const { tripId } = request.params as { tripId: string };
+    const messages = await prisma.tripMessage.findMany({
+      where: { tripId },
+      orderBy: { createdAt: "asc" },
+    });
+    return { messages };
+  });
+
+  app.post("/trips/:tripId/messages", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as { body?: string };
+    const text = (body.body ?? "").trim();
+    if (!text)
+      return reply.status(400).send({ error: "Message cannot be empty" });
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { id: true },
+    });
+    if (!trip) return reply.status(404).send({ error: "Trip not found" });
+    const author = request.adminSession!.user;
+    const message = await prisma.tripMessage.create({
+      data: {
+        tripId,
+        authorId: author.id,
+        authorName: author.name ?? author.email,
+        authorRole: "admin",
+        body: text,
+      },
+    });
+    return reply.status(201).send({ message });
   });
 
   // Convert an intake submission into a trip (idempotent).

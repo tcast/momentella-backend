@@ -165,11 +165,13 @@ model Trip {
   originIntakeSubmissionId String?           @unique
   originIntakeSubmission   IntakeSubmission? @relation("TripFromIntake", fields: [originIntakeSubmissionId], references: [id], onDelete: SetNull)
 
-  notes       TripNote[]
+  notes     TripNote[]
+  proposals Proposal[]
+  messages  TripMessage[]
 
-  createdAt   DateTime   @default(now())
-  updatedAt   DateTime   @updatedAt
-  client      User       @relation(fields: [clientId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  client    User     @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
   @@index([status])
@@ -190,6 +192,65 @@ model TripNote {
 
   @@index([tripId])
   @@map("trip_note")
+}
+
+enum ProposalStatus {
+  /// Just published — the client hasn't acted yet.
+  SENT
+  /// Client approved this version.
+  APPROVED
+  /// Client requested changes (see responseNote).
+  CHANGES_REQUESTED
+  /// Admin pulled this version back.
+  WITHDRAWN
+}
+
+/// Frozen snapshot of a trip + its itinerary that the admin sends to the
+/// client. New version per round of feedback. Stored on disk as JSON so the
+/// client always sees what was sent, regardless of later edits to the
+/// working `Trip.itinerarySchema`.
+model Proposal {
+  id              String         @id @default(cuid())
+  tripId          String
+  trip            Trip           @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  /// Per-trip auto-incrementing version (1, 2, 3, …).
+  version         Int
+  /// JSON: { version, trip: {…}, itinerary: ItinerarySchema, message? }
+  schema          Json
+  status          ProposalStatus @default(SENT)
+  /// Optional message from the admin attached at publish time.
+  message         String?
+  publishedById   String?
+  publishedByName String?
+  respondedAt     DateTime?
+  responderId     String?
+  responderName   String?
+  /// Optional note from the client (e.g. their change requests).
+  responseNote    String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  @@unique([tripId, version])
+  @@index([tripId])
+  @@map("proposal")
+}
+
+/// Conversation thread between the admin team and the client for a trip.
+/// `authorRole` is captured at write time so re-roling a user later doesn't
+/// rewrite the past.
+model TripMessage {
+  id         String   @id @default(cuid())
+  tripId     String
+  trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  authorId   String?
+  authorName String?
+  /// "admin" | "client"
+  authorRole String
+  body       String
+  createdAt  DateTime @default(now())
+
+  @@index([tripId, createdAt])
+  @@map("trip_message")
 }
 
 model BookingRequest {
