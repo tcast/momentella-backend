@@ -25,6 +25,10 @@ import {
   type ProposalSchema,
 } from "../lib/proposal-schema.js";
 import {
+  notifyNewMessage,
+  notifyProposalPublished,
+} from "../lib/trip-notifications.js";
+import {
   BookingKind,
   BookingStatus,
   ProposalStatus,
@@ -463,6 +467,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       }
       return p;
     });
+    void notifyProposalPublished(proposal.id);
     return reply.status(201).send({ proposal });
   });
 
@@ -520,6 +525,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         body: text,
       },
     });
+    void notifyNewMessage(message.id);
     return reply.status(201).send({ message });
   });
 

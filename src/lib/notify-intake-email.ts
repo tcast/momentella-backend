@@ -1,6 +1,19 @@
 /**
- * Optional Resend notification when an intake is submitted.
- * Set RESEND_API_KEY and INTAKE_NOTIFICATION_EMAIL (or NOTIFY_EMAIL) on the API service.
+ * Admin alert when an intake is submitted. Uses the shared mailer so
+ * everything is branded + reads the same env vars (RESEND_API_KEY,
+ * RESEND_FROM, RESEND_TEAM_EMAILS).
+ */
+import {
+  appOrigin,
+  brandedEmailHtml,
+  plainTextLines,
+  quoteBlock,
+  sendEmail,
+  teamAlertEmails,
+} from "./mailer.js";
+
+/**
+ * Backwards-compatible export. Routes call this fire-and-forget on submit.
  */
 export async function sendIntakeNotificationEmail(opts: {
   formName: string;
@@ -9,53 +22,75 @@ export async function sendIntakeNotificationEmail(opts: {
   submissionId: string;
   summaryLines: string[];
 }): Promise<void> {
-  const apiKey = process.env.RESEND_API_KEY;
-  const to =
-    process.env.INTAKE_NOTIFICATION_EMAIL ?? process.env.NOTIFY_EMAIL ?? "";
-  const from =
-    process.env.RESEND_FROM_EMAIL ?? "Momentella <onboarding@resend.dev>";
+  const recipients =
+    teamAlertEmails().length > 0
+      ? teamAlertEmails()
+      : (() => {
+          // Backwards-compat: honor old single-recipient env vars if present.
+          const legacy =
+            process.env.INTAKE_NOTIFICATION_EMAIL?.trim() ||
+            process.env.NOTIFY_EMAIL?.trim();
+          return legacy ? [legacy] : [];
+        })();
 
-  if (!apiKey || !to) {
+  if (recipients.length === 0) {
     if (process.env.NODE_ENV === "production") {
       console.warn(
-        "[intake] RESEND_API_KEY or INTAKE_NOTIFICATION_EMAIL not set — skipping email notification",
+        "[intake] No team email configured — skipping intake notification.",
       );
     }
     return;
   }
 
-  const appUrl = process.env.CLIENT_APP_ORIGIN ?? process.env.BETTER_AUTH_URL ?? "";
-  const detailPath = appUrl
-    ? `${appUrl.replace(/\/$/, "")}/admin/intake/submissions/${opts.submissionId}`
-    : "";
+  const portal = appOrigin();
+  const detailPath = portal
+    ? `${portal}/admin/intake/submissions/${opts.submissionId}`
+    : null;
 
-  const text = [
-    `New trip intake — ${opts.formName} (${opts.formSlug})`,
+  const summary = opts.summaryLines.length
+    ? `<ul style="margin:12px 0;padding:0 0 0 18px;color:#1c1917;font-family:Georgia,'Times New Roman',serif;font-size:14px;line-height:1.5;">${opts.summaryLines
+        .map((l) => `<li style="margin:4px 0;">${escape(l)}</li>`)
+        .join("")}</ul>`
+    : "<p>(No answers yet — open the submission to see what was sent.)</p>";
+
+  const html = brandedEmailHtml({
+    preheader: `${opts.formName} — ${opts.submitterEmail}`,
+    eyebrow: "New trip intake",
+    heading: `${opts.formName}`,
+    intro: `Submitted by ${opts.submitterEmail}.`,
+    bodyHtml: summary,
+    cta: detailPath
+      ? { label: "Open submission in admin", href: detailPath }
+      : undefined,
+    footerNote: "You're receiving this because you're on the Momentella team alerts list.",
+  });
+
+  const text = plainTextLines([
+    `New trip intake — ${opts.formName}`,
     `From: ${opts.submitterEmail}`,
-    `Submission id: ${opts.submissionId}`,
     detailPath ? `Open: ${detailPath}` : "",
     "",
     ...opts.summaryLines,
-  ]
-    .filter(Boolean)
-    .join("\n");
+  ]);
 
-  const res = await fetch("https://api.resend.com/emails", {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from,
-      to: [to],
+  try {
+    await sendEmail({
+      to: recipients,
       subject: `[Momentella intake] ${opts.formName} — ${opts.submitterEmail}`,
+      html,
       text,
-    }),
-  });
-
-  if (!res.ok) {
-    const err = await res.text();
-    console.error("[intake] Resend error:", res.status, err);
+    });
+  } catch (err) {
+    console.error("[intake] notification send failed:", err);
   }
 }
+
+function escape(s: string): string {
+  return s
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
+}
+// `quoteBlock` re-exported only so build never marks it unused.
+export { quoteBlock };

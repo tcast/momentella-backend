@@ -2,6 +2,10 @@ import type { FastifyPluginAsync } from "fastify";
 import { ProposalStatus } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { getSession } from "../lib/request-session.js";
+import {
+  notifyNewMessage,
+  notifyProposalResponded,
+} from "../lib/trip-notifications.js";
 
 /** Family client portal — session required, `role` must be `client`. */
 export const clientRoutes: FastifyPluginAsync = async (app) => {
@@ -151,6 +155,7 @@ export const clientRoutes: FastifyPluginAsync = async (app) => {
         });
         return p;
       });
+      void notifyProposalResponded(updated.id);
       return { proposal: updated };
     },
   );
@@ -192,6 +197,7 @@ export const clientRoutes: FastifyPluginAsync = async (app) => {
         body: text,
       },
     });
+    void notifyNewMessage(message.id);
     return reply.status(201).send({ message });
   });
 
