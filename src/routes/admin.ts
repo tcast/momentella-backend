@@ -706,6 +706,23 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           uploadedByName: author.name ?? author.email,
         },
       });
+      // Auto-post a system message into the trip thread so the client
+      // gets emailed (regular new-message dedup applies). Admin can opt
+      // out by toggling visibility off after the fact.
+      try {
+        const threadMsg = await prisma.tripMessage.create({
+          data: {
+            tripId,
+            authorId: author.id,
+            authorName: author.name ?? author.email,
+            authorRole: "admin",
+            body: `📎 Shared a new document: ${doc.name}`,
+          },
+        });
+        void notifyNewMessage(threadMsg.id);
+      } catch (err) {
+        app.log.warn({ err }, "[upload] failed to post thread message");
+      }
       return reply.status(201).send({ document: doc });
     } catch (err) {
       if (err instanceof ObjectStorageNotConfigured) {
@@ -789,6 +806,63 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       }
     },
   );
+
+  app.get("/users/:userId", async (request, reply) => {
+    const { userId } = request.params as { userId: string };
+    const user = await prisma.user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        email: true,
+        name: true,
+        role: true,
+        emailVerified: true,
+        banned: true,
+        banReason: true,
+        createdAt: true,
+        updatedAt: true,
+      },
+    });
+    if (!user) return reply.status(404).send({ error: "User not found" });
+
+    const trips = await prisma.trip.findMany({
+      where: { clientId: userId },
+      orderBy: { updatedAt: "desc" },
+      select: {
+        id: true,
+        title: true,
+        status: true,
+        kind: true,
+        destination: true,
+        destinations: true,
+        startsOn: true,
+        endsOn: true,
+        partyAdults: true,
+        partyChildren: true,
+        partyChildAges: true,
+        homeAirportIata: true,
+        updatedAt: true,
+        createdAt: true,
+        _count: { select: { proposals: true, bookings: true } },
+      },
+    });
+
+    const submissions = await prisma.intakeSubmission.findMany({
+      where: { OR: [{ clientId: userId }, { email: user.email }] },
+      orderBy: { createdAt: "desc" },
+      take: 25,
+      select: {
+        id: true,
+        status: true,
+        createdAt: true,
+        form: { select: { id: true, name: true, slug: true } },
+        formVersion: { select: { version: true } },
+        convertedTrip: { select: { id: true, title: true } },
+      },
+    });
+
+    return { user, trips, submissions };
+  });
 
   app.get("/users", async () => {
     const rows = await prisma.user.findMany({
