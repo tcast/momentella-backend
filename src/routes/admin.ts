@@ -14,6 +14,7 @@ import {
 } from "../lib/page-schema.js";
 import {
   ObjectStorageNotConfigured,
+  deleteObject,
   isObjectStorageConfigured,
   putObject,
 } from "../lib/object-storage.js";
@@ -23,9 +24,76 @@ import {
   PROPOSAL_SCHEMA_VERSION,
   type ProposalSchema,
 } from "../lib/proposal-schema.js";
-import { ProposalStatus, TripKind, TripStatus } from "@prisma/client";
+import {
+  BookingKind,
+  BookingStatus,
+  ProposalStatus,
+  TripKind,
+  TripStatus,
+} from "@prisma/client";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+
+/** Pull only the booking fields a client may set, with mild type coercion. */
+function parseBookingBody(
+  body: Record<string, unknown>,
+  _ctx: { title?: string; kind?: string; status?: string },
+): Record<string, unknown> {
+  const out: Record<string, unknown> = {};
+  if (typeof body.title === "string") out.title = body.title.trim();
+  if (body.vendorName !== undefined)
+    out.vendorName =
+      typeof body.vendorName === "string" && body.vendorName.trim()
+        ? body.vendorName.trim()
+        : null;
+  if (body.vendorUrl !== undefined)
+    out.vendorUrl =
+      typeof body.vendorUrl === "string" && body.vendorUrl.trim()
+        ? body.vendorUrl.trim()
+        : null;
+  if (body.bookingRef !== undefined)
+    out.bookingRef =
+      typeof body.bookingRef === "string" && body.bookingRef.trim()
+        ? body.bookingRef.trim()
+        : null;
+  if (body.bookedBy !== undefined) {
+    const v = String(body.bookedBy);
+    out.bookedBy = v === "us" || v === "them" ? v : null;
+  }
+  if (body.startDate !== undefined)
+    out.startDate =
+      typeof body.startDate === "string" && body.startDate
+        ? new Date(body.startDate)
+        : null;
+  if (body.endDate !== undefined)
+    out.endDate =
+      typeof body.endDate === "string" && body.endDate
+        ? new Date(body.endDate)
+        : null;
+  if (body.cost !== undefined) {
+    if (body.cost === null || body.cost === "") out.cost = null;
+    else {
+      const n = typeof body.cost === "number" ? body.cost : Number(body.cost);
+      out.cost = Number.isFinite(n) ? n : null;
+    }
+  }
+  if (body.costNotes !== undefined)
+    out.costNotes =
+      typeof body.costNotes === "string" && body.costNotes.trim()
+        ? body.costNotes.trim()
+        : null;
+  if (body.description !== undefined)
+    out.description =
+      typeof body.description === "string" && body.description.trim()
+        ? body.description.trim()
+        : null;
+  if (body.notes !== undefined)
+    out.notes =
+      typeof body.notes === "string" && body.notes.trim()
+        ? body.notes.trim()
+        : null;
+  return out;
+}
 
 /** Internal admin API — session required, `role` must be `admin`. */
 export const adminRoutes: FastifyPluginAsync = async (app) => {
@@ -115,6 +183,8 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           },
         },
         messages: { orderBy: { createdAt: "asc" } },
+        bookings: { orderBy: [{ startDate: "asc" }, { createdAt: "asc" }] },
+        documents: { orderBy: { createdAt: "desc" } },
       },
     });
     if (!trip) return reply.status(404).send({ error: "Not found" });
@@ -451,6 +521,252 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return reply.status(201).send({ message });
+  });
+
+  // ── Bookings ──────────────────────────────────────────────────────────
+  app.post("/trips/:tripId/bookings", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as Record<string, unknown>;
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { id: true },
+    });
+    if (!trip) return reply.status(404).send({ error: "Trip not found" });
+    const kind = String(body.kind ?? "");
+    if (!(Object.values(BookingKind) as string[]).includes(kind)) {
+      return reply.status(400).send({ error: "kind required" });
+    }
+    const title = typeof body.title === "string" ? body.title.trim() : "";
+    if (!title) {
+      return reply.status(400).send({ error: "title required" });
+    }
+    const status = String(body.status ?? "DRAFT");
+    if (!(Object.values(BookingStatus) as string[]).includes(status)) {
+      return reply.status(400).send({ error: "invalid status" });
+    }
+    const data = parseBookingBody(body, { title, kind, status });
+    const booking = await prisma.booking.create({
+      data: {
+        tripId,
+        title,
+        kind: kind as BookingKind,
+        status: status as BookingStatus,
+        ...data,
+      },
+    });
+    return reply.status(201).send({ booking });
+  });
+
+  app.patch("/trips/:tripId/bookings/:bookingId", async (request, reply) => {
+    const { tripId, bookingId } = request.params as {
+      tripId: string;
+      bookingId: string;
+    };
+    const body = request.body as Record<string, unknown>;
+    const existing = await prisma.booking.findFirst({
+      where: { id: bookingId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    const data: Record<string, unknown> = {};
+    if (body.kind !== undefined) {
+      if (!(Object.values(BookingKind) as string[]).includes(String(body.kind))) {
+        return reply.status(400).send({ error: "invalid kind" });
+      }
+      data.kind = body.kind as BookingKind;
+    }
+    if (body.status !== undefined) {
+      if (
+        !(Object.values(BookingStatus) as string[]).includes(String(body.status))
+      ) {
+        return reply.status(400).send({ error: "invalid status" });
+      }
+      data.status = body.status as BookingStatus;
+    }
+    Object.assign(data, parseBookingBody(body, {}));
+    if (Object.keys(data).length === 0) {
+      return reply.status(400).send({ error: "Nothing to update" });
+    }
+    const booking = await prisma.booking.update({
+      where: { id: bookingId },
+      data,
+    });
+    return { booking };
+  });
+
+  app.delete("/trips/:tripId/bookings/:bookingId", async (request, reply) => {
+    const { tripId, bookingId } = request.params as {
+      tripId: string;
+      bookingId: string;
+    };
+    const existing = await prisma.booking.findFirst({
+      where: { id: bookingId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    await prisma.booking.delete({ where: { id: bookingId } });
+    return { ok: true };
+  });
+
+  // ── Documents ─────────────────────────────────────────────────────────
+  const MAX_DOCUMENT_BYTES = 25 * 1024 * 1024;
+  const ALLOWED_DOCUMENT_TYPES = new Set([
+    "application/pdf",
+    "image/jpeg",
+    "image/png",
+    "image/webp",
+    "image/gif",
+    "application/msword",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "text/plain",
+    "text/csv",
+  ]);
+
+  app.post("/trips/:tripId/documents", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { id: true },
+    });
+    if (!trip) return reply.status(404).send({ error: "Trip not found" });
+    if (!isObjectStorageConfigured()) {
+      return reply.status(503).send({
+        error:
+          "Storage isn't configured. Ask your developer to set up the S3 / R2 env vars.",
+      });
+    }
+    let part;
+    try {
+      part = await request.file();
+    } catch (err) {
+      app.log.warn({ err }, "multipart parse failed");
+      return reply.status(400).send({ error: "Invalid upload" });
+    }
+    if (!part) return reply.status(400).send({ error: "No file in request" });
+    const contentType = part.mimetype;
+    if (!ALLOWED_DOCUMENT_TYPES.has(contentType)) {
+      return reply.status(415).send({
+        error: `Unsupported file type (${contentType || "unknown"}).`,
+      });
+    }
+    const buf = await part.toBuffer();
+    if (buf.length === 0) {
+      return reply.status(400).send({ error: "Empty file" });
+    }
+    if (buf.length > MAX_DOCUMENT_BYTES) {
+      return reply.status(413).send({
+        error: `File is too large (${(buf.length / 1024 / 1024).toFixed(1)} MB). Max 25 MB.`,
+      });
+    }
+    const fields = part.fields as
+      | Record<string, { value?: unknown }>
+      | undefined;
+    const customName =
+      fields?.name && typeof fields.name.value === "string"
+        ? fields.name.value.trim()
+        : "";
+    const bookingId =
+      fields?.bookingId && typeof fields.bookingId.value === "string"
+        ? fields.bookingId.value.trim() || null
+        : null;
+    if (bookingId) {
+      const linked = await prisma.booking.findFirst({
+        where: { id: bookingId, tripId },
+        select: { id: true },
+      });
+      if (!linked) {
+        return reply.status(400).send({ error: "Linked booking not found" });
+      }
+    }
+    try {
+      const stored = await putObject({
+        body: buf,
+        contentType,
+        filename: part.filename || "document",
+        prefix: `trips/${tripId}/documents`,
+      });
+      const author = request.adminSession!.user;
+      const doc = await prisma.tripDocument.create({
+        data: {
+          tripId,
+          bookingId,
+          name: customName || part.filename || "Document",
+          storageKey: stored.key,
+          url: stored.url,
+          contentType: stored.contentType,
+          size: stored.bytes,
+          visibleToClient: true,
+          uploadedById: author.id,
+          uploadedByName: author.name ?? author.email,
+        },
+      });
+      return reply.status(201).send({ document: doc });
+    } catch (err) {
+      if (err instanceof ObjectStorageNotConfigured) {
+        return reply.status(503).send({ error: err.message });
+      }
+      app.log.error({ err }, "document upload failed");
+      return reply.status(500).send({ error: "Upload failed" });
+    }
+  });
+
+  app.patch("/trips/:tripId/documents/:documentId", async (request, reply) => {
+    const { tripId, documentId } = request.params as {
+      tripId: string;
+      documentId: string;
+    };
+    const body = request.body as {
+      name?: string;
+      visibleToClient?: boolean;
+      bookingId?: string | null;
+    };
+    const existing = await prisma.tripDocument.findFirst({
+      where: { id: documentId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    const data: Record<string, unknown> = {};
+    if (body.name !== undefined) {
+      const n = body.name.trim();
+      if (!n) return reply.status(400).send({ error: "Name cannot be empty" });
+      data.name = n;
+    }
+    if (body.visibleToClient !== undefined) {
+      data.visibleToClient = !!body.visibleToClient;
+    }
+    if (body.bookingId !== undefined) {
+      if (body.bookingId === null) {
+        data.bookingId = null;
+      } else {
+        const linked = await prisma.booking.findFirst({
+          where: { id: body.bookingId, tripId },
+          select: { id: true },
+        });
+        if (!linked)
+          return reply.status(400).send({ error: "Linked booking not found" });
+        data.bookingId = body.bookingId;
+      }
+    }
+    const document = await prisma.tripDocument.update({
+      where: { id: documentId },
+      data,
+    });
+    return { document };
+  });
+
+  app.delete("/trips/:tripId/documents/:documentId", async (request, reply) => {
+    const { tripId, documentId } = request.params as {
+      tripId: string;
+      documentId: string;
+    };
+    const existing = await prisma.tripDocument.findFirst({
+      where: { id: documentId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    await prisma.tripDocument.delete({ where: { id: documentId } });
+    if (isObjectStorageConfigured()) {
+      void deleteObject(existing.storageKey);
+    }
+    return { ok: true };
   });
 
   // Convert an intake submission into a trip (idempotent).

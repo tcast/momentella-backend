@@ -168,6 +168,8 @@ model Trip {
   notes     TripNote[]
   proposals Proposal[]
   messages  TripMessage[]
+  bookings  Booking[]
+  documents TripDocument[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -251,6 +253,88 @@ model TripMessage {
 
   @@index([tripId, createdAt])
   @@map("trip_message")
+}
+
+enum BookingKind {
+  LODGING
+  FLIGHT
+  TRANSFER
+  ACTIVITY
+  CRUISE
+  CAR_RENTAL
+  RAIL
+  INSURANCE
+  OTHER
+}
+
+enum BookingStatus {
+  /// Saved internally; not actually booked yet.
+  DRAFT
+  /// Held with the supplier; awaiting confirmation.
+  PENDING
+  /// Booked + confirmed.
+  CONFIRMED
+  CANCELLED
+}
+
+/// Operational ledger of bookings for a trip. The itinerary describes the
+/// experience; the booking row is the source of truth for "what's actually
+/// reserved, with whom, for how much, under what reference."
+model Booking {
+  id          String         @id @default(cuid())
+  tripId      String
+  trip        Trip           @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  kind        BookingKind
+  status      BookingStatus  @default(DRAFT)
+  title       String
+  vendorName  String?
+  /// Free-form URL — typically the Fora link or supplier confirmation page.
+  vendorUrl   String?
+  bookingRef  String?
+  /// "us" (Momentella) or "them" (client books on their own).
+  bookedBy    String?
+  startDate   DateTime?
+  endDate     DateTime?
+  /// Total cost in trip currency (USD assumed for v1).
+  cost        Float?
+  costNotes   String?
+  /// Visible to the client.
+  description String?
+  /// Admin-only.
+  notes       String?
+  createdAt   DateTime       @default(now())
+  updatedAt   DateTime       @updatedAt
+
+  documents TripDocument[]
+
+  @@index([tripId])
+  @@index([status])
+  @@map("booking")
+}
+
+/// Files attached to a trip (or a specific Booking). Stored on the same R2
+/// bucket as image uploads. `visibleToClient` defaults true so vouchers and
+/// confirmations show up on the family's portal automatically.
+model TripDocument {
+  id              String   @id @default(cuid())
+  tripId          String
+  trip            Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+  bookingId       String?
+  booking         Booking? @relation(fields: [bookingId], references: [id], onDelete: SetNull)
+  name            String
+  storageKey      String
+  url             String
+  contentType     String
+  size            Int
+  visibleToClient Boolean  @default(true)
+  uploadedById    String?
+  uploadedByName  String?
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([tripId])
+  @@index([bookingId])
+  @@map("trip_document")
 }
 
 model BookingRequest {

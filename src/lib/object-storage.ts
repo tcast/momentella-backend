@@ -16,7 +16,11 @@
  */
 
 import { randomBytes } from "node:crypto";
-import { PutObjectCommand, S3Client } from "@aws-sdk/client-s3";
+import {
+  DeleteObjectCommand,
+  PutObjectCommand,
+  S3Client,
+} from "@aws-sdk/client-s3";
 
 let cached: { client: S3Client; bucket: string; publicBase: string } | null =
   null;
@@ -128,4 +132,16 @@ export async function putObject(input: UploadInput): Promise<UploadResult> {
     bytes: input.body.length,
     contentType: input.contentType,
   };
+}
+
+/** Best-effort delete. Logs and swallows storage errors so a missing object
+ * doesn't block deleting the DB row. */
+export async function deleteObject(key: string): Promise<void> {
+  const { client, bucket } = getObjectStorage();
+  try {
+    await client.send(new DeleteObjectCommand({ Bucket: bucket, Key: key }));
+  } catch (err) {
+    // eslint-disable-next-line no-console
+    console.warn(`[object-storage] delete failed for ${key}:`, err);
+  }
 }

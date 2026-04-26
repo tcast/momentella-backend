@@ -9,7 +9,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicIntakeRoutes } from "./routes/public-intake.js";
 
-const MAX_UPLOAD_BYTES = 10 * 1024 * 1024; // 10 MB hard ceiling at the parser
+const MAX_UPLOAD_BYTES = 30 * 1024 * 1024; // 30 MB ceiling at the parser; per-route logic enforces tighter caps for images vs. docs.
 
 function buildWebRequest(request: FastifyRequestLike): Request {
   const url = new URL(request.url, `http://${request.headers.host}`);

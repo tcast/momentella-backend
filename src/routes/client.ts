@@ -56,6 +56,37 @@ export const clientRoutes: FastifyPluginAsync = async (app) => {
           },
         },
         messages: { orderBy: { createdAt: "asc" } },
+        bookings: {
+          // Hide draft / cancelled rows — those aren't ready for the family.
+          where: { status: { in: ["PENDING", "CONFIRMED"] } },
+          orderBy: [{ startDate: "asc" }, { createdAt: "asc" }],
+          // Note: cost, costNotes, vendorUrl, notes are intentionally omitted.
+          select: {
+            id: true,
+            kind: true,
+            status: true,
+            title: true,
+            vendorName: true,
+            bookingRef: true,
+            bookedBy: true,
+            startDate: true,
+            endDate: true,
+            description: true,
+          },
+        },
+        documents: {
+          where: { visibleToClient: true },
+          orderBy: { createdAt: "desc" },
+          select: {
+            id: true,
+            name: true,
+            url: true,
+            contentType: true,
+            size: true,
+            createdAt: true,
+            bookingId: true,
+          },
+        },
       },
     });
     if (!trip) return reply.status(404).send({ error: "Not found" });
