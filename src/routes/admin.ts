@@ -17,6 +17,8 @@ import {
   isObjectStorageConfigured,
   putObject,
 } from "../lib/object-storage.js";
+import { convertIntakeToTrip } from "../lib/intake-to-trip.js";
+import { TripKind, TripStatus } from "@prisma/client";
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -51,13 +53,221 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     return { bookingRequests: rows };
   });
 
-  app.get("/trips", async () => {
-    const rows = await prisma.trip.findMany({
+  app.get("/trips", async (request) => {
+    const q = request.query as {
+      status?: string;
+      kind?: string;
+      clientId?: string;
+      take?: string;
+    };
+    const take = Math.min(200, Math.max(1, Number(q.take) || 100));
+    const where: Record<string, unknown> = {};
+    if (
+      q.status &&
+      (Object.values(TripStatus) as string[]).includes(q.status)
+    ) {
+      where.status = q.status as TripStatus;
+    }
+    if (q.kind && (Object.values(TripKind) as string[]).includes(q.kind)) {
+      where.kind = q.kind as TripKind;
+    }
+    if (q.clientId) where.clientId = q.clientId;
+    const trips = await prisma.trip.findMany({
+      where,
       orderBy: { updatedAt: "desc" },
-      take: 100,
+      take,
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        _count: { select: { notes: true } },
+      },
     });
-    return { trips: rows };
+    return { trips };
   });
+
+  app.get("/trips/:tripId", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      include: {
+        client: { select: { id: true, name: true, email: true } },
+        originIntakeSubmission: {
+          select: { id: true, formId: true, createdAt: true, email: true },
+        },
+        notes: { orderBy: { createdAt: "desc" } },
+      },
+    });
+    if (!trip) return reply.status(404).send({ error: "Not found" });
+    return { trip };
+  });
+
+  app.post("/trips", async (request, reply) => {
+    const body = request.body as {
+      clientId?: string;
+      title?: string;
+      kind?: string;
+      destination?: string;
+    };
+    if (!body.clientId || !body.title?.trim()) {
+      return reply.status(400).send({ error: "clientId and title required" });
+    }
+    const client = await prisma.user.findUnique({
+      where: { id: body.clientId },
+    });
+    if (!client) return reply.status(400).send({ error: "Client not found" });
+    const kind =
+      body.kind && (Object.values(TripKind) as string[]).includes(body.kind)
+        ? (body.kind as TripKind)
+        : TripKind.FULL_SERVICE;
+    const trip = await prisma.trip.create({
+      data: {
+        clientId: client.id,
+        title: body.title.trim(),
+        destination: body.destination?.trim() || null,
+        kind,
+        status: TripStatus.LEAD,
+      },
+    });
+    return reply.status(201).send({ trip });
+  });
+
+  app.patch("/trips/:tripId", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as {
+      title?: string;
+      destination?: string | null;
+      summary?: string | null;
+      kind?: string;
+      status?: string;
+      startsOn?: string | null;
+      endsOn?: string | null;
+      homeAirportIata?: string | null;
+      partyAdults?: number | null;
+      partyChildren?: number | null;
+      partyChildAges?: number[] | null;
+      budgetTier?: string | null;
+      destinations?: unknown[] | null;
+    };
+    const data: Record<string, unknown> = {};
+    if (body.title !== undefined) {
+      const t = body.title.trim();
+      if (!t) return reply.status(400).send({ error: "title required" });
+      data.title = t;
+    }
+    if (body.destination !== undefined) data.destination = body.destination ?? null;
+    if (body.summary !== undefined) data.summary = body.summary ?? null;
+    if (body.kind !== undefined) {
+      if (!(Object.values(TripKind) as string[]).includes(body.kind)) {
+        return reply.status(400).send({ error: "invalid kind" });
+      }
+      data.kind = body.kind as TripKind;
+    }
+    if (body.status !== undefined) {
+      if (!(Object.values(TripStatus) as string[]).includes(body.status)) {
+        return reply.status(400).send({ error: "invalid status" });
+      }
+      data.status = body.status as TripStatus;
+    }
+    if (body.startsOn !== undefined)
+      data.startsOn = body.startsOn ? new Date(body.startsOn) : null;
+    if (body.endsOn !== undefined)
+      data.endsOn = body.endsOn ? new Date(body.endsOn) : null;
+    if (body.homeAirportIata !== undefined)
+      data.homeAirportIata = body.homeAirportIata ?? null;
+    if (body.partyAdults !== undefined) data.partyAdults = body.partyAdults;
+    if (body.partyChildren !== undefined) data.partyChildren = body.partyChildren;
+    if (body.partyChildAges !== undefined)
+      data.partyChildAges = body.partyChildAges ?? null;
+    if (body.budgetTier !== undefined) data.budgetTier = body.budgetTier ?? null;
+    if (body.destinations !== undefined)
+      data.destinations = body.destinations ?? null;
+
+    try {
+      const trip = await prisma.trip.update({ where: { id: tripId }, data });
+      return { trip };
+    } catch {
+      return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  app.delete("/trips/:tripId", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    try {
+      await prisma.trip.delete({ where: { id: tripId } });
+      return { ok: true };
+    } catch {
+      return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  // Threaded internal notes on a trip (mirrors intake-submission notes).
+  app.post("/trips/:tripId/notes", async (request, reply) => {
+    const { tripId } = request.params as { tripId: string };
+    const body = request.body as { body?: string };
+    const text = (body.body ?? "").trim();
+    if (!text) return reply.status(400).send({ error: "Note cannot be empty" });
+    const trip = await prisma.trip.findUnique({
+      where: { id: tripId },
+      select: { id: true },
+    });
+    if (!trip) return reply.status(404).send({ error: "Trip not found" });
+    const author = request.adminSession!.user;
+    const note = await prisma.tripNote.create({
+      data: {
+        tripId,
+        authorId: author.id,
+        authorName: author.name ?? author.email,
+        body: text,
+      },
+    });
+    return reply.status(201).send({ note });
+  });
+
+  app.patch("/trips/:tripId/notes/:noteId", async (request, reply) => {
+    const { tripId, noteId } = request.params as {
+      tripId: string;
+      noteId: string;
+    };
+    const body = request.body as { body?: string };
+    const text = (body.body ?? "").trim();
+    if (!text) return reply.status(400).send({ error: "Note cannot be empty" });
+    const existing = await prisma.tripNote.findFirst({
+      where: { id: noteId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    const note = await prisma.tripNote.update({
+      where: { id: noteId },
+      data: { body: text },
+    });
+    return { note };
+  });
+
+  app.delete("/trips/:tripId/notes/:noteId", async (request, reply) => {
+    const { tripId, noteId } = request.params as {
+      tripId: string;
+      noteId: string;
+    };
+    const existing = await prisma.tripNote.findFirst({
+      where: { id: noteId, tripId },
+    });
+    if (!existing) return reply.status(404).send({ error: "Not found" });
+    await prisma.tripNote.delete({ where: { id: noteId } });
+    return { ok: true };
+  });
+
+  // Convert an intake submission into a trip (idempotent).
+  app.post(
+    "/intake-submissions/:submissionId/convert-to-trip",
+    async (request, reply) => {
+      const { submissionId } = request.params as { submissionId: string };
+      try {
+        const result = await convertIntakeToTrip(submissionId);
+        return reply.status(result.alreadyConverted ? 200 : 201).send(result);
+      } catch (err) {
+        app.log.error({ err }, "intake → trip conversion failed");
+        return reply.status(500).send({ error: "Conversion failed" });
+      }
+    },
+  );
 
   app.get("/users", async () => {
     const rows = await prisma.user.findMany({
@@ -457,6 +667,9 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
         client: { select: { id: true, email: true, name: true } },
         notesThread: {
           orderBy: { createdAt: "desc" },
+        },
+        convertedTrip: {
+          select: { id: true, title: true, status: true },
         },
       },
     });

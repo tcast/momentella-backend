@@ -94,12 +94,32 @@ model TwoFactor {
 }
 
 enum TripStatus {
-  DRAFT
+  /// Fresh — usually created from an intake submission.
+  LEAD
+  /// Internal planning underway.
+  PLANNING
+  /// Proposal published to the client.
   PROPOSED
-  CONFIRMED
+  /// Bookings confirmed. (legacy: CONFIRMED)
+  BOOKED
+  /// Travelers are on the trip right now.
   IN_PROGRESS
+  /// Trip is over.
   COMPLETED
   ARCHIVED
+
+  // Deprecated values kept so any pre-existing rows still parse.
+  DRAFT
+  CONFIRMED
+}
+
+enum TripKind {
+  /// Momentella designs and books the entire trip.
+  FULL_SERVICE
+  /// Momentella designs the itinerary; the client books on their own.
+  ITINERARY_ONLY
+  /// One-off consult / advice (no full itinerary).
+  CONSULT
 }
 
 enum BookingRequestStatus {
@@ -109,20 +129,63 @@ enum BookingRequestStatus {
   CLOSED
 }
 
+/// One trip per request. A client can have many over time. A trip is the
+/// hub the rest of the planning hangs off (itinerary, proposals, bookings,
+/// notes, messages — added in later phases).
 model Trip {
   id          String     @id @default(cuid())
   clientId    String
   title       String
+  /// Plain-text summary destination (legacy / fallback).
   destination String?
-  status      TripStatus @default(DRAFT)
+  kind        TripKind   @default(FULL_SERVICE)
+  status      TripStatus @default(LEAD)
   summary     String?
-  startsOn    DateTime?
-  endsOn      DateTime?
+
+  // Travel basics — copied from the intake when converted, freely editable
+  // afterward. Stored on Trip so the original IntakeSubmission stays a
+  // historical record.
+  startsOn        DateTime?
+  endsOn          DateTime?
+  homeAirportIata String?
+  partyAdults     Int?
+  partyChildren   Int?
+  /// JSON array of child ages (numbers).
+  partyChildAges  Json?
+  /// value | mid | luxury | ultra | discuss (free-form to stay flexible).
+  budgetTier      String?
+  /// JSON array of {id, slug, name, type, country, region}.
+  destinations    Json?
+
+  // One-to-one back-pointer to the intake submission this trip came from.
+  originIntakeSubmissionId String?           @unique
+  originIntakeSubmission   IntakeSubmission? @relation("TripFromIntake", fields: [originIntakeSubmissionId], references: [id], onDelete: SetNull)
+
+  notes       TripNote[]
+
   createdAt   DateTime   @default(now())
   updatedAt   DateTime   @updatedAt
   client      User       @relation(fields: [clientId], references: [id], onDelete: Cascade)
 
   @@index([clientId])
+  @@index([status])
+  @@index([kind])
+}
+
+/// Internal admin notes on a trip (not visible to clients). Same threaded
+/// shape as IntakeSubmissionNote.
+model TripNote {
+  id         String   @id @default(cuid())
+  tripId     String
+  authorId   String?
+  authorName String?
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+  trip       Trip     @relation(fields: [tripId], references: [id], onDelete: Cascade)
+
+  @@index([tripId])
+  @@map("trip_note")
 }
 
 model BookingRequest {
@@ -277,6 +340,7 @@ model IntakeSubmission {
   formVersion   IntakeFormVersion      @relation(fields: [formVersionId], references: [id], onDelete: Cascade)
   client        User?                  @relation(fields: [clientId], references: [id], onDelete: SetNull)
   notesThread   IntakeSubmissionNote[]
+  convertedTrip Trip?                  @relation("TripFromIntake")
 
   @@index([formId])
   @@index([email])
