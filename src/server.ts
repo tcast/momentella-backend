@@ -1,6 +1,7 @@
 import Fastify from "fastify";
 import cors from "@fastify/cors";
 import multipart from "@fastify/multipart";
+import rawBody from "fastify-raw-body";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
@@ -8,6 +9,7 @@ import { seedPlaces } from "./lib/seed-places.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicIntakeRoutes } from "./routes/public-intake.js";
+import { webhookRoutes } from "./routes/webhooks.js";
 
 const MAX_UPLOAD_BYTES = 30 * 1024 * 1024; // 30 MB ceiling at the parser; per-route logic enforces tighter caps for images vs. docs.
 
@@ -47,6 +49,14 @@ export async function buildApp() {
       files: 1,
       fields: 4,
     },
+  });
+
+  // Capture raw body on routes that opt in (e.g. signed webhooks).
+  await app.register(rawBody, {
+    field: "rawBody",
+    global: false,
+    encoding: "utf8",
+    runFirst: true,
   });
 
   await app.register(cors, {
@@ -94,6 +104,7 @@ export async function buildApp() {
   await app.register(clientRoutes, { prefix: "/api/client" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(publicIntakeRoutes, { prefix: "/api/public" });
+  await app.register(webhookRoutes, { prefix: "/api/webhooks" });
 
   app.get("/health", async () => ({ ok: true, service: "momentella-api" }));
 

@@ -3,6 +3,7 @@
  * failures are logged but never block the API response.
  */
 import { prisma } from "./prisma.js";
+import { buildTripReplyTo } from "./inbound-email.js";
 import {
   appOrigin,
   brandedEmailHtml,
@@ -83,6 +84,7 @@ export async function notifyProposalPublished(
       subject: `Your Momentella trip is ready to review — ${proposal.trip.title}`,
       html,
       text,
+      replyTo: buildTripReplyTo(proposal.trip.id) ?? undefined,
     });
   } catch (err) {
     console.error("[notify] proposal published failed:", err);
@@ -152,6 +154,7 @@ export async function notifyProposalResponded(
       subject: `[Momentella] ${clientName} ${decisionLabel} v${proposal.version} — ${proposal.trip.title}`,
       html,
       text,
+      replyTo: buildTripReplyTo(proposal.trip.id) ?? undefined,
     });
   } catch (err) {
     console.error("[notify] proposal responded failed:", err);
@@ -220,6 +223,7 @@ export async function notifyNewMessage(messageId: string): Promise<void> {
         subject: `New message about your trip — ${msg.trip.title}`,
         html,
         text,
+        replyTo: buildTripReplyTo(msg.trip.id) ?? undefined,
       });
     } else {
       // Notify the team.
@@ -247,6 +251,7 @@ export async function notifyNewMessage(messageId: string): Promise<void> {
         subject: `[Momentella] ${msg.authorName ?? "Client"} replied — ${msg.trip.title}`,
         html,
         text,
+        replyTo: buildTripReplyTo(msg.trip.id) ?? undefined,
       });
     }
   } catch (err) {
