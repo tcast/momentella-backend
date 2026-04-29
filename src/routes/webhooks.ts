@@ -1,11 +1,15 @@
 /**
- * Public, signature-verified webhook surface. Today: Resend inbound email
- * replies → posted into the matching trip thread.
+ * Public, signature-verified webhook surface. Today:
+ *   - Resend inbound email replies → posted into the matching trip thread.
+ *   - Stripe checkout.session.completed → fulfill the order (trip / gift).
  */
 
 import type { FastifyPluginAsync } from "fastify";
 import { Webhook } from "svix";
+import type Stripe from "stripe";
+import { fulfillCheckoutCompleted } from "../lib/commerce.js";
 import { prisma } from "../lib/prisma.js";
+import { getStripe, isStripeConfigured } from "../lib/stripe.js";
 import {
   extractTripId,
   htmlToText,
@@ -122,6 +126,89 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
         app.log.error({ err }, "[webhook] failed to store message");
         return reply.status(500).send({ error: "Could not store message" });
       }
+    },
+  );
+
+  // ── Stripe ────────────────────────────────────────────────────────────
+  app.post(
+    "/stripe",
+    { config: { rawBody: true } },
+    async (request, reply) => {
+      const secret = process.env.STRIPE_WEBHOOK_SECRET?.trim();
+      if (!secret || !isStripeConfigured()) {
+        app.log.warn("[stripe] webhook hit but Stripe isn't configured");
+        return reply.status(503).send({ error: "Stripe not configured" });
+      }
+      const sig = request.headers["stripe-signature"];
+      const raw = (request as { rawBody?: string }).rawBody;
+      if (!raw || typeof sig !== "string") {
+        return reply.status(400).send({ error: "Missing signature / body" });
+      }
+      const stripe = getStripe();
+      let event: Stripe.Event;
+      try {
+        event = stripe.webhooks.constructEvent(raw, sig, secret);
+      } catch (err) {
+        app.log.warn({ err }, "[stripe] signature verification failed");
+        return reply.status(400).send({ error: "Invalid signature" });
+      }
+
+      try {
+        switch (event.type) {
+          case "checkout.session.completed": {
+            const s = event.data.object as Stripe.Checkout.Session;
+            if (s.id) {
+              await fulfillCheckoutCompleted(s.id);
+            }
+            break;
+          }
+          case "checkout.session.async_payment_succeeded": {
+            const s = event.data.object as Stripe.Checkout.Session;
+            if (s.id) await fulfillCheckoutCompleted(s.id);
+            break;
+          }
+          case "checkout.session.expired": {
+            const s = event.data.object as Stripe.Checkout.Session;
+            if (s.id) {
+              await prisma.order.updateMany({
+                where: { stripeCheckoutSessionId: s.id, status: "PENDING" },
+                data: { status: "CANCELLED" },
+              });
+            }
+            break;
+          }
+          case "charge.refunded": {
+            const ch = event.data.object as Stripe.Charge;
+            const pi =
+              typeof ch.payment_intent === "string"
+                ? ch.payment_intent
+                : ch.payment_intent?.id;
+            if (pi) {
+              await prisma.order.updateMany({
+                where: { stripePaymentIntentId: pi },
+                data: { status: "REFUNDED", refundedAt: new Date() },
+              });
+            }
+            break;
+          }
+          case "payment_intent.payment_failed": {
+            const pi = event.data.object as Stripe.PaymentIntent;
+            await prisma.order.updateMany({
+              where: { stripePaymentIntentId: pi.id },
+              data: { status: "FAILED" },
+            });
+            break;
+          }
+          default:
+            // ignore — many events fire we don't care about
+            break;
+        }
+      } catch (err) {
+        app.log.error({ err, type: event.type }, "[stripe] handler failed");
+        return reply.status(500).send({ error: "Handler failed" });
+      }
+
+      return reply.status(200).send({ received: true });
     },
   );
 };

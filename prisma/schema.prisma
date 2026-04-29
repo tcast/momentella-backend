@@ -26,6 +26,8 @@ model User {
   trips             Trip[]
   bookingRequests   BookingRequest[]
   intakeSubmissions IntakeSubmission[]
+  ordersBought      Order[]            @relation("OrderBuyer")
+  giftsRedeemed     GiftCertificate[]  @relation("GiftRedeemer")
 
   @@unique([email])
   @@map("user")
@@ -171,6 +173,16 @@ model Trip {
   bookings  Booking[]
   documents TripDocument[]
 
+  /// When this trip was created from a paid order, the order it fulfills.
+  fulfilledByOrderId String?
+  fulfilledByOrder   Order?  @relation("OrderTrips", fields: [fulfilledByOrderId], references: [id], onDelete: SetNull)
+  /// When this trip was created from a redeemed gift certificate, the cert.
+  redeemedFromGift   GiftCertificate? @relation("GiftRedeemedTrip")
+  /// SKU that fulfilled this trip (for display: "2-day itinerary").
+  productSlug        String?
+  /// 1, 2, or 3 — soft cap shown in the itinerary builder. null = uncapped.
+  itineraryDaysAllowed Int?
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
   client    User     @relation(fields: [clientId], references: [id], onDelete: Cascade)
@@ -178,6 +190,7 @@ model Trip {
   @@index([clientId])
   @@index([status])
   @@index([kind])
+  @@index([fulfilledByOrderId])
 }
 
 /// Internal admin notes on a trip (not visible to clients). Same threaded
@@ -350,6 +363,124 @@ model BookingRequest {
 
   @@index([email])
   @@index([clientId])
+}
+
+enum ProductKind {
+  /// 1, 2, or 3-day itinerary planning (others may follow).
+  ITINERARY_PLANNING
+}
+
+/// Sellable services. Stripe is the source of truth for pricing; we mirror
+/// the price + Stripe Price ID here for fast display + product-management UI.
+model Product {
+  id            String      @id @default(cuid())
+  slug          String      @unique
+  kind          ProductKind
+  name          String
+  description   String?
+  /// Number of itinerary days included (when kind == ITINERARY_PLANNING).
+  itineraryDays Int?
+  /// Cents, USD.
+  priceCents    Int
+  /// Live Stripe Price ID (price_…). Filled in once synced.
+  stripePriceId String?
+  active        Boolean     @default(true)
+  sortOrder     Int         @default(0)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  orders Order[]
+
+  @@map("product")
+}
+
+enum OrderStatus {
+  /// Stripe Checkout session created; waiting for payment.
+  PENDING
+  /// Payment succeeded; fulfillment complete (trip + emails).
+  PAID
+  /// Buyer abandoned the Stripe Checkout flow.
+  CANCELLED
+  /// Stripe webhook reported failure.
+  FAILED
+  /// Refunded after payment.
+  REFUNDED
+}
+
+/// One purchase = one Order. Single-item for v1 (no cart).
+model Order {
+  id             String      @id @default(cuid())
+  buyerId        String?
+  buyer          User?       @relation("OrderBuyer", fields: [buyerId], references: [id], onDelete: SetNull)
+  /// Always captured even when the buyer doesn't have / need an account
+  /// (e.g. one-shot gift purchase).
+  buyerEmail     String
+  buyerName      String?
+
+  productId      String
+  product        Product     @relation(fields: [productId], references: [id], onDelete: Restrict)
+  /// Snapshot of the price at purchase time so later edits don't rewrite history.
+  unitPriceCents Int
+  quantity       Int         @default(1)
+  totalCents     Int
+
+  status         OrderStatus @default(PENDING)
+  isGift         Boolean     @default(false)
+
+  // Stripe linkage
+  stripeCheckoutSessionId String? @unique
+  stripePaymentIntentId   String?
+
+  paidAt     DateTime?
+  refundedAt DateTime?
+
+  /// Free-form admin notes.
+  notes String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  /// Trips fulfilled by this order. For self-purchase, exactly one — created
+  /// at payment time. For a gift, zero until the recipient redeems, then one.
+  trips           Trip[]            @relation("OrderTrips")
+  giftCertificate GiftCertificate?
+
+  @@index([buyerId])
+  @@index([buyerEmail])
+  @@index([status])
+  @@map("order")
+}
+
+model GiftCertificate {
+  id      String @id @default(cuid())
+  orderId String @unique
+  order   Order  @relation(fields: [orderId], references: [id], onDelete: Cascade)
+
+  /// Short, URL-safe redemption code, e.g. "MOM-7K9Q-PXR3".
+  code String @unique
+
+  recipientEmail String
+  recipientName  String?
+  /// Optional personal message from the buyer.
+  message        String?
+
+  /// When the gift email was scheduled to be sent (null = immediate).
+  scheduledFor DateTime?
+  sentAt       DateTime?
+
+  redeemedAt     DateTime?
+  redeemedById   String?
+  redeemedBy     User?     @relation("GiftRedeemer", fields: [redeemedById], references: [id], onDelete: SetNull)
+  /// The Trip created from redemption.
+  redeemedTripId String?   @unique
+  redeemedTrip   Trip?     @relation("GiftRedeemedTrip", fields: [redeemedTripId], references: [id], onDelete: SetNull)
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([recipientEmail])
+  @@index([redeemedById])
+  @@map("gift_certificate")
 }
 
 /// Configurable trip intake: multiple forms, versioned definitions (JSON schema).

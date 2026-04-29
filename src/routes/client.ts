@@ -209,4 +209,59 @@ export const clientRoutes: FastifyPluginAsync = async (app) => {
     });
     return { bookingRequests: requests };
   });
+
+  app.get("/orders", async (request) => {
+    const userId = request.clientSession!.user.id;
+    const orders = await prisma.order.findMany({
+      where: { buyerId: userId },
+      orderBy: { createdAt: "desc" },
+      include: {
+        product: { select: { name: true, slug: true, itineraryDays: true } },
+        giftCertificate: {
+          select: {
+            id: true,
+            code: true,
+            recipientEmail: true,
+            recipientName: true,
+            redeemedAt: true,
+          },
+        },
+        trips: { select: { id: true, title: true, status: true } },
+      },
+    });
+    return { orders };
+  });
+
+  app.get("/orders/:orderId", async (request, reply) => {
+    const userId = request.clientSession!.user.id;
+    const { orderId } = request.params as { orderId: string };
+    const order = await prisma.order.findFirst({
+      where: { id: orderId, buyerId: userId },
+      include: {
+        product: true,
+        giftCertificate: true,
+        trips: { select: { id: true, title: true, status: true } },
+      },
+    });
+    if (!order) return reply.status(404).send({ error: "Not found" });
+    return { order };
+  });
+
+  app.get("/gifts-received", async (request) => {
+    const userId = request.clientSession!.user.id;
+    const certs = await prisma.giftCertificate.findMany({
+      where: { redeemedById: userId },
+      orderBy: { redeemedAt: "desc" },
+      include: {
+        order: {
+          include: {
+            product: { select: { name: true, slug: true } },
+            buyer: { select: { name: true, email: true } },
+          },
+        },
+        redeemedTrip: { select: { id: true, title: true, status: true } },
+      },
+    });
+    return { gifts: certs };
+  });
 };

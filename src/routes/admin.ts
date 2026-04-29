@@ -28,6 +28,7 @@ import {
   notifyNewMessage,
   notifyProposalPublished,
 } from "../lib/trip-notifications.js";
+import { getStripe, isStripeConfigured, syncProductToStripe } from "../lib/stripe.js";
 import {
   BookingKind,
   BookingStatus,
@@ -1609,6 +1610,240 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
     } catch {
       return reply.status(404).send({ error: "Not found" });
     }
+  });
+
+  // ── Commerce: Products ───────────────────────────────────────────────
+  app.get("/products", async () => {
+    const products = await prisma.product.findMany({
+      orderBy: [{ sortOrder: "asc" }, { priceCents: "asc" }],
+    });
+    return { products };
+  });
+
+  app.post("/products", async (request, reply) => {
+    const body = request.body as {
+      slug?: string;
+      kind?: string;
+      name?: string;
+      description?: string;
+      itineraryDays?: number;
+      priceCents?: number;
+      sortOrder?: number;
+    };
+    const slug = body.slug?.trim().toLowerCase();
+    const name = body.name?.trim();
+    if (!slug || !/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(slug)) {
+      return reply.status(400).send({ error: "Invalid slug" });
+    }
+    if (!name) return reply.status(400).send({ error: "Name required" });
+    const priceCents = Number(body.priceCents);
+    if (!Number.isInteger(priceCents) || priceCents < 0) {
+      return reply.status(400).send({ error: "priceCents required" });
+    }
+    try {
+      const product = await prisma.product.create({
+        data: {
+          slug,
+          kind: "ITINERARY_PLANNING",
+          name,
+          description: body.description?.trim() || null,
+          itineraryDays: body.itineraryDays ?? null,
+          priceCents,
+          sortOrder: body.sortOrder ?? 0,
+        },
+      });
+      return reply.status(201).send({ product });
+    } catch {
+      return reply.status(409).send({ error: "Slug already exists" });
+    }
+  });
+
+  app.patch("/products/:productId", async (request, reply) => {
+    const { productId } = request.params as { productId: string };
+    const body = request.body as {
+      name?: string;
+      description?: string | null;
+      itineraryDays?: number | null;
+      priceCents?: number;
+      active?: boolean;
+      sortOrder?: number;
+    };
+    const data: Record<string, unknown> = {};
+    if (body.name !== undefined) data.name = body.name.trim();
+    if (body.description !== undefined)
+      data.description = body.description?.trim() || null;
+    if (body.itineraryDays !== undefined)
+      data.itineraryDays = body.itineraryDays;
+    if (body.priceCents !== undefined) {
+      const n = Number(body.priceCents);
+      if (!Number.isInteger(n) || n < 0)
+        return reply.status(400).send({ error: "Invalid priceCents" });
+      data.priceCents = n;
+      // Price changed → Stripe Price needs to be regenerated. Clear our
+      // cached id so the next sync produces a fresh one.
+      data.stripePriceId = null;
+    }
+    if (body.active !== undefined) data.active = body.active;
+    if (body.sortOrder !== undefined) data.sortOrder = body.sortOrder;
+    try {
+      const product = await prisma.product.update({
+        where: { id: productId },
+        data,
+      });
+      // Auto-sync to Stripe in the background (don't block the save).
+      if (isStripeConfigured()) {
+        void (async () => {
+          try {
+            const synced = await syncProductToStripe(product);
+            await prisma.product.update({
+              where: { id: product.id },
+              data: { stripePriceId: synced.stripePriceId },
+            });
+          } catch (err) {
+            app.log.error({ err }, "stripe product sync failed");
+          }
+        })();
+      }
+      return { product };
+    } catch {
+      return reply.status(404).send({ error: "Not found" });
+    }
+  });
+
+  app.post("/products/:productId/sync-stripe", async (request, reply) => {
+    if (!isStripeConfigured()) {
+      return reply.status(503).send({ error: "Stripe not configured" });
+    }
+    const { productId } = request.params as { productId: string };
+    const product = await prisma.product.findUnique({
+      where: { id: productId },
+    });
+    if (!product) return reply.status(404).send({ error: "Not found" });
+    try {
+      const synced = await syncProductToStripe(product);
+      const updated = await prisma.product.update({
+        where: { id: product.id },
+        data: { stripePriceId: synced.stripePriceId },
+      });
+      return { product: updated };
+    } catch (err) {
+      app.log.error({ err }, "stripe sync failed");
+      return reply.status(500).send({ error: "Sync failed" });
+    }
+  });
+
+  app.delete("/products/:productId", async (request, reply) => {
+    const { productId } = request.params as { productId: string };
+    try {
+      await prisma.product.delete({ where: { id: productId } });
+      return { ok: true };
+    } catch {
+      return reply
+        .status(409)
+        .send({ error: "Can't delete — orders reference this product. Mark it inactive instead." });
+    }
+  });
+
+  // ── Commerce: Orders ─────────────────────────────────────────────────
+  app.get("/orders", async (request) => {
+    const q = request.query as {
+      status?: string;
+      isGift?: string;
+      take?: string;
+    };
+    const take = Math.min(200, Math.max(1, Number(q.take) || 100));
+    const where: Record<string, unknown> = {};
+    if (q.status) where.status = q.status;
+    if (q.isGift === "1" || q.isGift === "true") where.isGift = true;
+    if (q.isGift === "0" || q.isGift === "false") where.isGift = false;
+    const orders = await prisma.order.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take,
+      include: {
+        product: { select: { name: true, slug: true } },
+        buyer: { select: { id: true, name: true, email: true } },
+        giftCertificate: {
+          select: {
+            id: true,
+            code: true,
+            recipientEmail: true,
+            recipientName: true,
+            redeemedAt: true,
+          },
+        },
+        trips: { select: { id: true, title: true } },
+      },
+    });
+    return { orders };
+  });
+
+  app.get("/orders/:orderId", async (request, reply) => {
+    const { orderId } = request.params as { orderId: string };
+    const order = await prisma.order.findUnique({
+      where: { id: orderId },
+      include: {
+        product: true,
+        buyer: { select: { id: true, name: true, email: true } },
+        giftCertificate: true,
+        trips: {
+          select: { id: true, title: true, status: true, clientId: true },
+        },
+      },
+    });
+    if (!order) return reply.status(404).send({ error: "Not found" });
+    return { order };
+  });
+
+  app.post("/orders/:orderId/refund", async (request, reply) => {
+    if (!isStripeConfigured()) {
+      return reply.status(503).send({ error: "Stripe not configured" });
+    }
+    const { orderId } = request.params as { orderId: string };
+    const order = await prisma.order.findUnique({ where: { id: orderId } });
+    if (!order) return reply.status(404).send({ error: "Not found" });
+    if (!order.stripePaymentIntentId) {
+      return reply.status(400).send({
+        error: "No Stripe payment intent on this order — can't refund automatically.",
+      });
+    }
+    if (order.status === "REFUNDED") {
+      return reply.status(400).send({ error: "Already refunded" });
+    }
+    const stripe = getStripe();
+    try {
+      await stripe.refunds.create({
+        payment_intent: order.stripePaymentIntentId,
+      });
+      // The refund webhook will update status; mirror it here for immediate UI.
+      const updated = await prisma.order.update({
+        where: { id: order.id },
+        data: { status: "REFUNDED", refundedAt: new Date() },
+      });
+      return { order: updated };
+    } catch (err) {
+      app.log.error({ err }, "refund failed");
+      return reply.status(500).send({ error: "Refund failed" });
+    }
+  });
+
+  // ── Commerce: Gift certificates ──────────────────────────────────────
+  app.get("/gift-certificates", async () => {
+    const certs = await prisma.giftCertificate.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 200,
+      include: {
+        order: {
+          include: {
+            product: { select: { name: true, slug: true } },
+            buyer: { select: { id: true, name: true, email: true } },
+          },
+        },
+        redeemedBy: { select: { id: true, name: true, email: true } },
+        redeemedTrip: { select: { id: true, title: true } },
+      },
+    });
+    return { giftCertificates: certs };
   });
 
   // -------------------------------------------------------------

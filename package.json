@@ -29,6 +29,7 @@
     "fastify": "^5.8.5",
     "fastify-raw-body": "^5.0.0",
     "prisma": "^6.19.3",
+    "stripe": "^22.1.0",
     "svix": "^1.92.2"
   },
   "devDependencies": {

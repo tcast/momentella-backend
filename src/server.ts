@@ -6,8 +6,10 @@ import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
 import { seedPlaces } from "./lib/seed-places.js";
+import { seedProducts } from "./lib/seed-products.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
+import { publicCommerceRoutes } from "./routes/public-commerce.js";
 import { publicIntakeRoutes } from "./routes/public-intake.js";
 import { webhookRoutes } from "./routes/webhooks.js";
 
@@ -104,6 +106,7 @@ export async function buildApp() {
   await app.register(clientRoutes, { prefix: "/api/client" });
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(publicIntakeRoutes, { prefix: "/api/public" });
+  await app.register(publicCommerceRoutes, { prefix: "/api/public" });
   await app.register(webhookRoutes, { prefix: "/api/webhooks" });
 
   app.get("/health", async () => ({ ok: true, service: "momentella-api" }));
@@ -132,4 +135,12 @@ void seedMarketingPages()
   })
   .catch((err) => {
     app.log.error({ err }, "marketing page seed failed — continuing anyway");
+  });
+
+void seedProducts()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded products");
+  })
+  .catch((err) => {
+    app.log.error({ err }, "product seed failed — continuing anyway");
   });
