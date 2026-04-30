@@ -3,6 +3,12 @@ import { prismaAdapter } from "better-auth/adapters/prisma";
 import { admin } from "better-auth/plugins/admin";
 import { magicLink } from "better-auth/plugins/magic-link";
 import { twoFactor } from "better-auth/plugins/two-factor";
+import {
+  brandedEmailHtml,
+  isMailerConfigured,
+  plainTextLines,
+  sendEmail,
+} from "./mailer.js";
 import { prisma } from "./prisma.js";
 
 function requireEnv(name: string): string {
@@ -53,12 +59,41 @@ export const auth = betterAuth({
   plugins: [
     magicLink({
       sendMagicLink: async ({ email, url }) => {
-        if (process.env.NODE_ENV === "production" && !process.env.RESEND_API_KEY) {
+        if (!isMailerConfigured()) {
           console.error(
-            "[magic-link] Set RESEND_API_KEY (or wire sendMagicLink) before relying on magic links in production.",
+            "[magic-link] Mailer not configured — set RESEND_API_KEY + RESEND_FROM. Magic link still printed to logs as a fallback.",
           );
+          console.info(`[magic-link] to=${email}\n${url}`);
+          return;
         }
-        console.info(`[magic-link] to=${email}\n${url}`);
+        const html = brandedEmailHtml({
+          eyebrow: "Sign in to Momentella",
+          heading: "Your one-tap sign-in link",
+          intro:
+            "Click the button below to sign in. The link is good for 15 minutes; if you didn't ask for it, you can safely ignore this email.",
+          cta: { label: "Sign in to Momentella", href: url },
+          footerNote: `Or paste this URL into your browser: ${url}`,
+        });
+        const text = plainTextLines([
+          "Hi,",
+          "",
+          "Tap to sign in to Momentella:",
+          url,
+          "",
+          "The link is good for 15 minutes.",
+        ]);
+        try {
+          await sendEmail({
+            to: email,
+            subject: "Sign in to Momentella",
+            html,
+            text,
+          });
+        } catch (err) {
+          console.error("[magic-link] send failed:", err);
+          // Best-effort log fallback so the user can still get in via support.
+          console.info(`[magic-link] to=${email}\n${url}`);
+        }
       },
       expiresIn: 60 * 15,
     }),

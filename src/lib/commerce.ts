@@ -350,6 +350,41 @@ export async function redeemGiftCertificate(
   return { tripId: trip.id, userId: user.id };
 }
 
+/**
+ * Re-send the original gift recipient email. Useful when the recipient lost
+ * the original or it landed in spam. Updates the cert's `sentAt` timestamp.
+ */
+export async function resendGiftRecipientEmail(certId: string): Promise<void> {
+  const cert = await prisma.giftCertificate.findUnique({
+    where: { id: certId },
+    include: {
+      order: {
+        include: {
+          product: true,
+          buyer: true,
+        },
+      },
+    },
+  });
+  if (!cert) throw new Error("Gift certificate not found.");
+  if (cert.redeemedAt) {
+    throw new Error("That gift has already been redeemed.");
+  }
+  const buyer = cert.order.buyer
+    ? { name: cert.order.buyer.name ?? cert.order.buyerName ?? cert.order.buyerEmail, email: cert.order.buyer.email }
+    : { name: cert.order.buyerName ?? cert.order.buyerEmail, email: cert.order.buyerEmail };
+  await sendGiftRecipientEmail(cert.order, buyer, {
+    code: cert.code,
+    recipientEmail: cert.recipientEmail,
+    recipientName: cert.recipientName,
+    message: cert.message,
+  });
+  await prisma.giftCertificate.update({
+    where: { id: cert.id },
+    data: { sentAt: new Date() },
+  });
+}
+
 // ── emails ──────────────────────────────────────────────────────────────
 
 function dollars(cents: number): string {

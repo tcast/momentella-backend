@@ -1,11 +1,13 @@
 import type { FastifyPluginAsync } from "fastify";
 import { prisma } from "../lib/prisma.js";
+import { auth } from "../lib/auth.js";
 import {
   createCheckoutSession,
   redeemGiftCertificate,
 } from "../lib/commerce.js";
 import { isStripeConfigured } from "../lib/stripe.js";
 import { getSession } from "../lib/request-session.js";
+import { appOrigin } from "../lib/mailer.js";
 
 /** Mounted at /api/public/commerce — no auth required. */
 export const publicCommerceRoutes: FastifyPluginAsync = async (app) => {
@@ -163,7 +165,28 @@ export const publicCommerceRoutes: FastifyPluginAsync = async (app) => {
         name,
         userId: session?.user?.id,
       });
-      return reply.status(200).send(out);
+      // If the redeemer is already signed in, no extra step needed.
+      // Otherwise, fire a magic link so they can land in their portal.
+      let signInState: "already_signed_in" | "magic_link_sent" =
+        "already_signed_in";
+      if (!session?.user) {
+        const callbackURL = `${appOrigin()}/dashboard/trips/${out.tripId}`;
+        try {
+          await auth.api.signInMagicLink({
+            body: { email, callbackURL, name: name ?? undefined },
+            headers: request.headers as unknown as Record<string, string>,
+          });
+          signInState = "magic_link_sent";
+        } catch (err) {
+          app.log.warn(
+            { err, email },
+            "[redeem] magic-link send failed; recipient must sign in manually",
+          );
+        }
+      }
+      return reply
+        .status(200)
+        .send({ ...out, signInState, redeemerEmail: email });
     } catch (err) {
       const msg = err instanceof Error ? err.message : "Could not redeem";
       return reply.status(400).send({ error: msg });

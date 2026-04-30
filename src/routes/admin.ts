@@ -29,6 +29,7 @@ import {
   notifyProposalPublished,
 } from "../lib/trip-notifications.js";
 import { getStripe, isStripeConfigured, syncProductToStripe } from "../lib/stripe.js";
+import { resendGiftRecipientEmail } from "../lib/commerce.js";
 import {
   BookingKind,
   BookingStatus,
@@ -1844,6 +1845,22 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return { giftCertificates: certs };
+  });
+
+  /**
+   * Resend the original gift recipient email. Use this if the recipient
+   * lost the email or it landed in spam. Refuses to resend if already
+   * redeemed (no point — they have a portal).
+   */
+  app.post("/gift-certificates/:id/resend", async (request, reply) => {
+    const { id } = request.params as { id: string };
+    try {
+      await resendGiftRecipientEmail(id);
+      return { ok: true };
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : "Could not resend";
+      return reply.status(400).send({ error: msg });
+    }
   });
 
   // -------------------------------------------------------------
