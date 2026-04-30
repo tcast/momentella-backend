@@ -468,6 +468,21 @@ model GiftCertificate {
   scheduledFor DateTime?
   sentAt       DateTime?
 
+  /// Resend's email_id, used to correlate webhook events back to this cert.
+  resendEmailId String?
+  /// Recipient mail server accepted the message (post-delivery).
+  deliveredAt   DateTime?
+  /// First time the tracking pixel reported the email opened.
+  firstOpenedAt DateTime?
+  /// Most recent open timestamp.
+  lastOpenedAt  DateTime?
+  /// Count of open events received from Resend.
+  openCount     Int       @default(0)
+  /// Set if Resend told us the message bounced.
+  bouncedAt     DateTime?
+  /// Bounce diagnostic from Resend (e.g. "Mailbox full").
+  bounceReason  String?
+
   redeemedAt     DateTime?
   redeemedById   String?
   redeemedBy     User?     @relation("GiftRedeemer", fields: [redeemedById], references: [id], onDelete: SetNull)
@@ -480,6 +495,7 @@ model GiftCertificate {
 
   @@index([recipientEmail])
   @@index([redeemedById])
+  @@index([resendEmailId])
   @@map("gift_certificate")
 }
 

@@ -46,18 +46,27 @@ function defaultFrom(): string {
   return `${name} <${addr}>`;
 }
 
+export interface SendEmailResult {
+  /** Resend's email_id (used to correlate delivery / open webhook events). */
+  id: string | null;
+}
+
 /**
  * Send an email via Resend. Resolves on success, rejects on send failure.
- * Callers should wrap with `void sendEmail(...).catch(log)` for fire-and-forget.
+ * Returns Resend's `email_id` when available so callers can persist it for
+ * later correlation with delivery / open / bounce webhook events.
+ * Callers that don't care can ignore the return value.
  */
-export async function sendEmail(opts: SendEmailOptions): Promise<void> {
+export async function sendEmail(
+  opts: SendEmailOptions,
+): Promise<SendEmailResult> {
   if (!isMailerConfigured()) {
     if (process.env.NODE_ENV === "production") {
       console.warn(
         "[mailer] RESEND_API_KEY / RESEND_FROM not set — skipping email send",
       );
     }
-    return;
+    return { id: null };
   }
   const apiKey = process.env.RESEND_API_KEY!;
   const replyTo = opts.replyTo ?? process.env.RESEND_REPLY_TO?.trim();
@@ -83,6 +92,8 @@ export async function sendEmail(opts: SendEmailOptions): Promise<void> {
     const text = await res.text().catch(() => "");
     throw new Error(`Resend error (${res.status}): ${text}`);
   }
+  const json = (await res.json().catch(() => null)) as { id?: string } | null;
+  return { id: json?.id ?? null };
 }
 
 // ── Branded template ──────────────────────────────────────────────────────

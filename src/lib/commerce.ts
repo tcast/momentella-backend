@@ -261,10 +261,11 @@ export async function fulfillCheckoutCompleted(
   });
   result.giftCertificateId = cert.id;
 
-  await Promise.all([
-    sendGiftRecipientEmail(order, buyer, cert).catch((e) =>
-      console.error("[commerce] gift recipient email failed:", e),
-    ),
+  const [giftSendResult] = await Promise.all([
+    sendGiftRecipientEmail(order, buyer, cert).catch((e) => {
+      console.error("[commerce] gift recipient email failed:", e);
+      return { resendEmailId: null as string | null };
+    }),
     sendBuyerGiftConfirmationEmail(order, buyer, cert).catch((e) =>
       console.error("[commerce] gift buyer email failed:", e),
     ),
@@ -274,7 +275,10 @@ export async function fulfillCheckoutCompleted(
   ]);
   await prisma.giftCertificate.update({
     where: { id: cert.id },
-    data: { sentAt: new Date() },
+    data: {
+      sentAt: new Date(),
+      resendEmailId: giftSendResult.resendEmailId,
+    },
   });
   return result;
 }
@@ -373,15 +377,26 @@ export async function resendGiftRecipientEmail(certId: string): Promise<void> {
   const buyer = cert.order.buyer
     ? { name: cert.order.buyer.name ?? cert.order.buyerName ?? cert.order.buyerEmail, email: cert.order.buyer.email }
     : { name: cert.order.buyerName ?? cert.order.buyerEmail, email: cert.order.buyerEmail };
-  await sendGiftRecipientEmail(cert.order, buyer, {
+  const sendResult = await sendGiftRecipientEmail(cert.order, buyer, {
     code: cert.code,
     recipientEmail: cert.recipientEmail,
     recipientName: cert.recipientName,
     message: cert.message,
   });
+  // Resend produces a brand-new email_id, so wipe the prior tracking state
+  // — the old delivered / opened timestamps are about a different message.
   await prisma.giftCertificate.update({
     where: { id: cert.id },
-    data: { sentAt: new Date() },
+    data: {
+      sentAt: new Date(),
+      resendEmailId: sendResult.resendEmailId,
+      deliveredAt: null,
+      firstOpenedAt: null,
+      lastOpenedAt: null,
+      openCount: 0,
+      bouncedAt: null,
+      bounceReason: null,
+    },
   });
 }
 
@@ -456,7 +471,7 @@ async function sendGiftRecipientEmail(
     recipientName: string | null;
     message: string | null;
   },
-) {
+): Promise<{ resendEmailId: string | null }> {
   const link = `${mailAppOrigin()}/redeem/${encodeURIComponent(cert.code)}`;
   const intro = `${buyer.name} sent you a Momentella ${order.product.name}. Click below to set up your account and start planning.`;
   const html = brandedEmailHtml({
@@ -469,7 +484,7 @@ async function sendGiftRecipientEmail(
     cta: { label: "Redeem your gift", href: link },
     footerNote: `Your code: ${cert.code} (works at ${link})`,
   });
-  await sendEmail({
+  const result = await sendEmail({
     to: cert.recipientEmail,
     subject: `${buyer.name} sent you a Momentella ${order.product.name}`,
     html,
@@ -482,6 +497,7 @@ async function sendGiftRecipientEmail(
       `Code: ${cert.code}`,
     ]),
   });
+  return { resendEmailId: result.id };
 }
 
 async function sendGiftRedeemedToBuyerEmail(

@@ -33,6 +33,23 @@ interface ResendInboundEvent {
   };
 }
 
+/** Resend "email events" webhook payload (delivered / opened / bounced / etc). */
+interface ResendEmailEvent {
+  type?: string;
+  created_at?: string;
+  data?: {
+    /** Resend's id — the value our `sendEmail` returns. */
+    email_id?: string;
+    /** Older payloads sometimes use `id`. */
+    id?: string;
+    from?: string;
+    to?: string[] | string;
+    subject?: string;
+    /** Bounce diagnostics (varies by event type). */
+    bounce?: { message?: string };
+  };
+}
+
 function asArray(v: string[] | string | undefined): string[] {
   if (!v) return [];
   return Array.isArray(v) ? v : [v];
@@ -126,6 +143,113 @@ export const webhookRoutes: FastifyPluginAsync = async (app) => {
         app.log.error({ err }, "[webhook] failed to store message");
         return reply.status(500).send({ error: "Could not store message" });
       }
+    },
+  );
+
+  /**
+   * Resend "email events" webhook (delivered / opened / clicked / bounced).
+   * Uses a separate secret from the inbound webhook because they're two
+   * different webhook endpoints in the Resend dashboard.
+   *
+   * Today this only updates GiftCertificate rows — the only emails whose
+   * Resend email_id we persist. Other tracked emails can opt in by adding
+   * fields + a lookup branch below.
+   */
+  app.post(
+    "/resend/events",
+    { config: { rawBody: true } },
+    async (request, reply) => {
+      const secret =
+        process.env.RESEND_EVENTS_WEBHOOK_SECRET?.trim() ||
+        // Fall back to the inbound secret if you set up a single combined
+        // webhook in Resend. Recommended split: separate secrets.
+        process.env.RESEND_WEBHOOK_SECRET?.trim();
+      if (!secret) {
+        app.log.warn("[events] no RESEND_EVENTS_WEBHOOK_SECRET set");
+        return reply.status(503).send({ error: "Webhook not configured" });
+      }
+      const raw = (request as { rawBody?: string }).rawBody;
+      if (!raw) return reply.status(400).send({ error: "Missing raw body" });
+
+      const headers: Record<string, string> = {};
+      for (const [k, v] of Object.entries(request.headers)) {
+        if (typeof v === "string") headers[k.toLowerCase()] = v;
+      }
+
+      let event: ResendEmailEvent;
+      try {
+        const wh = new Webhook(secret);
+        event = wh.verify(raw, headers) as ResendEmailEvent;
+      } catch (err) {
+        app.log.warn({ err }, "[events] signature verification failed");
+        return reply.status(401).send({ error: "Invalid signature" });
+      }
+
+      const data = event.data;
+      const emailId = data?.email_id ?? data?.id;
+      const type = event.type ?? "";
+      if (!emailId) {
+        return reply.status(200).send({ ok: true, ignored: "no_email_id" });
+      }
+
+      const cert = await prisma.giftCertificate.findFirst({
+        where: { resendEmailId: emailId },
+        select: { id: true },
+      });
+      if (!cert) {
+        // Not one of the emails we currently track — ack and move on.
+        return reply.status(200).send({ ok: true, ignored: "no_match" });
+      }
+
+      const now = new Date();
+      try {
+        switch (type) {
+          case "email.delivered":
+            await prisma.giftCertificate.update({
+              where: { id: cert.id },
+              data: { deliveredAt: now },
+            });
+            break;
+          case "email.opened":
+            await prisma.giftCertificate.update({
+              where: { id: cert.id },
+              data: {
+                firstOpenedAt: { set: undefined }, // see next call
+                lastOpenedAt: now,
+                openCount: { increment: 1 },
+              },
+            });
+            // Set firstOpenedAt only if it's still null. Done as a separate
+            // updateMany to avoid clobbering an existing value.
+            await prisma.giftCertificate.updateMany({
+              where: { id: cert.id, firstOpenedAt: null },
+              data: { firstOpenedAt: now },
+            });
+            break;
+          case "email.bounced":
+            await prisma.giftCertificate.update({
+              where: { id: cert.id },
+              data: {
+                bouncedAt: now,
+                bounceReason: data?.bounce?.message ?? null,
+              },
+            });
+            break;
+          case "email.complained":
+            // Treat as a soft signal we don't currently surface.
+            break;
+          case "email.clicked":
+            // We can repurpose lastOpenedAt as "engaged" if helpful, but
+            // not strictly necessary today.
+            break;
+          default:
+            break;
+        }
+      } catch (err) {
+        app.log.error({ err, type, emailId }, "[events] update failed");
+        return reply.status(500).send({ error: "Update failed" });
+      }
+      return reply.status(200).send({ ok: true });
     },
   );
 
