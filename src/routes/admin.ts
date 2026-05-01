@@ -31,6 +31,10 @@ import {
 import { getStripe, isStripeConfigured, syncProductToStripe } from "../lib/stripe.js";
 import { resendGiftRecipientEmail } from "../lib/commerce.js";
 import {
+  defaultSiteNavConfig,
+  parseSiteNavConfig,
+} from "../lib/site-nav-schema.js";
+import {
   BookingKind,
   BookingStatus,
   ProposalStatus,
@@ -1845,6 +1849,38 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       },
     });
     return { giftCertificates: certs };
+  });
+
+  // ── Site navigation ──────────────────────────────────────────────────
+  app.get("/site-nav", async () => {
+    const row = await prisma.siteNavConfig.findUnique({
+      where: { id: "default" },
+    });
+    const parsed = row ? parseSiteNavConfig(row.config) : null;
+    return { config: parsed ?? defaultSiteNavConfig() };
+  });
+
+  app.put("/site-nav", async (request, reply) => {
+    const parsed = parseSiteNavConfig(request.body);
+    if (!parsed) {
+      return reply.status(400).send({ error: "Invalid nav config" });
+    }
+    const row = await prisma.siteNavConfig.upsert({
+      where: { id: "default" },
+      update: { config: parsed as object },
+      create: { id: "default", config: parsed as object },
+    });
+    return { config: parsed, updatedAt: row.updatedAt };
+  });
+
+  app.post("/site-nav/reset", async () => {
+    const cfg = defaultSiteNavConfig();
+    await prisma.siteNavConfig.upsert({
+      where: { id: "default" },
+      update: { config: cfg as object },
+      create: { id: "default", config: cfg as object },
+    });
+    return { config: cfg };
   });
 
   /**

@@ -7,6 +7,7 @@ import { auth } from "./lib/auth.js";
 import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
 import { seedPlaces } from "./lib/seed-places.js";
 import { seedProducts } from "./lib/seed-products.js";
+import { seedSiteNav } from "./lib/seed-site-nav.js";
 import { adminRoutes } from "./routes/admin.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicCommerceRoutes } from "./routes/public-commerce.js";
@@ -127,6 +128,14 @@ void seedPlaces()
   })
   .catch((err) => {
     app.log.error({ err }, "place seed failed — continuing anyway");
+  });
+
+void seedSiteNav()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded site nav");
+  })
+  .catch((err) => {
+    app.log.warn({ err }, "site nav seed failed");
   });
 
 void seedMarketingPages()

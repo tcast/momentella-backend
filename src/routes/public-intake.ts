@@ -6,6 +6,10 @@ import { sendIntakeNotificationEmail } from "../lib/notify-intake-email.js";
 import { parseIntakeFormSchema } from "../lib/intake-schema.js";
 import { parsePageSchema } from "../lib/page-schema.js";
 import {
+  defaultSiteNavConfig,
+  parseSiteNavConfig,
+} from "../lib/site-nav-schema.js";
+import {
   checkIntakeSubmitRateLimit,
   clientIpFromRequest,
 } from "../lib/rate-limit-memory.js";
@@ -53,6 +57,19 @@ function rankDestination(
 
 /** Public intake — no auth required; optional session links submission to user. */
 export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
+  /**
+   * Editable site navigation. Returns the current published config —
+   * always returns a valid shape (defaults if no row exists or stored
+   * JSON is malformed) so the public SiteHeader never breaks.
+   */
+  app.get("/site-nav", async () => {
+    const row = await prisma.siteNavConfig.findUnique({
+      where: { id: "default" },
+    });
+    const parsed = row ? parseSiteNavConfig(row.config) : null;
+    return { config: parsed ?? defaultSiteNavConfig() };
+  });
+
   app.get("/pages/:slug", async (request, reply) => {
     const slug = (request.params as { slug: string }).slug;
     if (!slugRe.test(slug)) {

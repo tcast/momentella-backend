@@ -499,6 +499,17 @@ model GiftCertificate {
   @@map("gift_certificate")
 }
 
+/// Editable site navigation. Single row keyed by `id = "default"` —
+/// the public SiteHeader and the admin nav builder both read/write this.
+/// `config` is a typed JSON blob (see lib/site-nav-schema.ts).
+model SiteNavConfig {
+  id        String   @id @default("default")
+  config    Json
+  updatedAt DateTime @updatedAt
+
+  @@map("site_nav_config")
+}
+
 /// Configurable trip intake: multiple forms, versioned definitions (JSON schema).
 model IntakeForm {
   id          String              @id @default(cuid())
