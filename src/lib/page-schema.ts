@@ -12,7 +12,8 @@ export type PageBlockType =
   | "rich_text"
   | "image"
   | "spacer"
-  | "intake_form";
+  | "intake_form"
+  | "products_grid";
 
 export interface CtaLink {
   label: string;
@@ -119,6 +120,21 @@ export interface IntakeFormBlock extends Base {
   body?: string;
 }
 
+/**
+ * Live, buyable product cards from /admin/products. The renderer fetches
+ * the current published product list and shows each as a card with price
+ * + checkout CTA. `mode` controls the framing:
+ *   "browse" — primary CTA "Get this plan", secondary "Send as a gift"
+ *   "gift"   — primary CTA "Gift this plan", secondary "Or buy for myself"
+ */
+export interface ProductsGridBlock extends Base {
+  type: "products_grid";
+  mode?: "browse" | "gift";
+  eyebrow?: string;
+  title?: string;
+  body?: string;
+}
+
 export type PageBlock =
   | HeroBlock
   | EditorialIntroBlock
@@ -129,7 +145,8 @@ export type PageBlock =
   | RichTextBlock
   | ImageBlock
   | SpacerBlock
-  | IntakeFormBlock;
+  | IntakeFormBlock
+  | ProductsGridBlock;
 
 export interface PageSchema {
   version: typeof PAGE_SCHEMA_VERSION;
@@ -147,6 +164,7 @@ const VALID_TYPES: ReadonlySet<string> = new Set<PageBlockType>([
   "image",
   "spacer",
   "intake_form",
+  "products_grid",
 ]);
 
 /**
@@ -438,10 +456,11 @@ export function defaultTripBookingPageSchema(
 }
 
 /**
- * Seed content for the `/gift-certificates` page — Mother's Day-aware
- * gifting promo for our itinerary planning packages. The eyebrow on the
- * hero references the upcoming holiday; admin can update it from the
- * page builder for other occasions (Father's Day, anniversaries, etc).
+ * Seed content for the `/gift-certificates` page. Conversion-focused:
+ * the hero CTA scrolls straight to a real, buyable products grid in
+ * gift mode (every card opens the checkout pre-toggled to "gift").
+ * Marketing copy follows the products to reassure but doesn't gate the
+ * primary action. Mother's Day eyebrow is admin-editable.
  */
 export function defaultGiftCertificatesPageSchema(): PageSchema {
   return {
@@ -457,10 +476,19 @@ export function defaultGiftCertificatesPageSchema(): PageSchema {
         eyebrow: "A Mother's Day gift she'll actually use",
         headline: "Skip the candles—",
         headlineMuted: "give her a vacation day, designed.",
-        body: "1, 2, or 3-day itinerary plans, gift-wrapped digitally. We'll email her a beautifully presented redemption link, and her dedicated trip designer takes it from there.",
-        primaryCta: { label: "Browse gift plans", href: "/services" },
+        body: "Pick a 1, 2, or 3-day itinerary plan below. We'll email her a beautifully presented redemption link, and her dedicated trip designer takes it from there.",
+        primaryCta: { label: "Choose her gift ↓", href: "#gift-plans" },
         secondaryCta: { label: "How gifting works", href: "#how-it-works" },
         height: "tall",
+      },
+      {
+        id: uid("plans"),
+        type: "products_grid",
+        anchor: "gift-plans",
+        mode: "gift",
+        eyebrow: "Choose her plan",
+        title: "Three ways to gift a perfect day",
+        body: "Every plan is built from scratch by a real travel designer—not a template, not an algorithm. She redeems when she's ready.",
       },
       {
         id: uid("intro"),
@@ -469,40 +497,7 @@ export function defaultGiftCertificatesPageSchema(): PageSchema {
         quoteMuted: "Give her a vacation day she'll actually relax through.",
         paragraphs: [
           "Mom doesn't need another mug. She needs the day in Lisbon she's been Pinterest-ing for three years, mapped out by someone who understands the difference between a perfect afternoon and a tourist's afternoon.",
-          "Pick a plan. Add a personal note. We'll send her a thoughtful gift email and her own private trip page. She doesn't have to do a thing until she's ready to start dreaming.",
-        ],
-      },
-      {
-        id: uid("tiles"),
-        type: "feature_tiles",
-        eyebrow: "Three plans, three vibes",
-        title: "What you can gift",
-        body: "Every plan is built from scratch by a real travel designer—not a template, not an algorithm.",
-        tiles: [
-          {
-            id: uid("tile"),
-            title: "1-day plan",
-            body: "$149 · One perfect day in a city she's never quite cracked. Hand-picked stops, calm pacing, and a route built around her tastes—not a tour bus.",
-            imageUrl:
-              "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=80",
-            imageAlt: "A morning view of Paris from a quiet rooftop",
-          },
-          {
-            id: uid("tile"),
-            title: "2-day plan",
-            body: "A long weekend with structure—two full days planned end to end, with a graceful arc from arrival breakfast to last sunset.",
-            imageUrl:
-              "https://images.unsplash.com/photo-1493558103817-58b2924bce98?auto=format&fit=crop&w=1200&q=80",
-            imageAlt: "A coastal hotel terrace at sunset",
-          },
-          {
-            id: uid("tile"),
-            title: "3-day plan",
-            body: "Half a vacation, stress-free. Three days of curated itinerary—anchor experiences, neighborhood meals, room to breathe.",
-            imageUrl:
-              "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=80",
-            imageAlt: "Mountain landscape under a soft golden sunrise",
-          },
+          "Pick a plan above. Add a personal note at checkout. We'll send her a thoughtful gift email and her own private trip page. She doesn't have to do a thing until she's ready to start dreaming.",
         ],
       },
       {
@@ -511,7 +506,7 @@ export function defaultGiftCertificatesPageSchema(): PageSchema {
         anchor: "how-it-works",
         eyebrow: "How gifting works",
         title: "Four steps. Five minutes.",
-        body: "Order today and she'll have her gift in her inbox within minutes—or pick a future delivery date if you want it to land on the day itself.",
+        body: "Order today and she'll have her gift in her inbox within minutes.",
         steps: [
           {
             id: uid("step"),
@@ -550,9 +545,9 @@ export function defaultGiftCertificatesPageSchema(): PageSchema {
       {
         id: uid("cta"),
         type: "cta_split",
-        eyebrow: "Ready to gift?",
-        title: "Browse plans and add your note",
-        cta: { label: "See the plans →", href: "/services" },
+        eyebrow: "Still scrolling?",
+        title: "Three plans. One gift she'll actually unwrap twice.",
+        cta: { label: "Choose her plan ↑", href: "#gift-plans" },
       },
     ],
   };
