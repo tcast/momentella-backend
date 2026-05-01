@@ -1,7 +1,9 @@
 import { prisma } from "./prisma.js";
 import {
   defaultConnectPageSchema,
+  defaultGiftCertificatesPageSchema,
   defaultHomePageSchema,
+  defaultTripBookingPageSchema,
   type PageSchema,
 } from "./page-schema.js";
 
@@ -56,7 +58,6 @@ export async function seedMarketingPages(): Promise<{
     "Connect (intake form)",
     "The /connect page that hosts the trip intake form",
     async () => {
-      // Prefer a currently-published intake form; fall back to "family-trip".
       const form = await prisma.intakeForm.findFirst({
         where: {
           archived: false,
@@ -66,6 +67,29 @@ export async function seedMarketingPages(): Promise<{
       });
       return defaultConnectPageSchema(form?.slug ?? "family-trip");
     },
+  );
+
+  await ensure(
+    "trip-booking",
+    "Trip booking (full-service pitch)",
+    "The /trip-booking marketing page — pitches end-to-end planning and embeds the intake form",
+    async () => {
+      const form = await prisma.intakeForm.findFirst({
+        where: {
+          archived: false,
+          versions: { some: { published: true } },
+        },
+        orderBy: { createdAt: "asc" },
+      });
+      return defaultTripBookingPageSchema(form?.slug ?? "family-trip");
+    },
+  );
+
+  await ensure(
+    "gift-certificates",
+    "Gift certificates",
+    "The /gift-certificates marketing page — promotes itinerary planning as a gift (Mother's Day-aware copy by default)",
+    () => defaultGiftCertificatesPageSchema(),
   );
 
   return stats;

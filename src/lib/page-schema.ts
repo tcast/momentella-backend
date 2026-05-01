@@ -307,6 +307,258 @@ export function defaultHomePageSchema(): PageSchema {
 }
 
 /**
+ * Seed content for the `/trip-booking` page — a richer pitch for our
+ * full-service planning offering, capped with the same intake form as
+ * `/connect`. Admin can replace any block in the page builder.
+ */
+export function defaultTripBookingPageSchema(
+  formSlug = "family-trip",
+): PageSchema {
+  return {
+    version: PAGE_SCHEMA_VERSION,
+    blocks: [
+      {
+        id: uid("hero"),
+        type: "hero",
+        imageUrl:
+          "https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=2000&q=80",
+        imageAlt: "A vintage suitcase on a quiet station platform at golden hour",
+        eyebrow: "Full-service trip planning",
+        headline: "We plan, book, and run—",
+        headlineMuted: "the whole trip.",
+        body: "Hotels, flights, transfers, guides, dinners, and on-trip support. Tell us where your family wants to go; we take care of the rest.",
+        primaryCta: { label: "Start a conversation", href: "#trip-intake" },
+        secondaryCta: { label: "How we plan", href: "#how-we-plan" },
+        height: "tall",
+      },
+      {
+        id: uid("intro"),
+        type: "editorial_intro",
+        quote: "Less logistics,",
+        quoteMuted: "more presence.",
+        paragraphs: [
+          "Most family trips fall apart in the seams: a missed transfer, a hotel that didn't actually have a crib, a dinner reservation no one ever confirmed. We design around the seams.",
+          "Momentella runs your trip end-to-end. You'll see the arc before a single booking is made, approve the pieces that matter, and step on the plane knowing the rest is handled. We're a text away the whole time.",
+        ],
+      },
+      {
+        id: uid("tiles"),
+        type: "feature_tiles",
+        eyebrow: "What's included",
+        title: "Every layer of the trip, handled",
+        body: "One studio, one designer, one point of contact—from the first dream all the way home.",
+        tiles: [
+          {
+            id: uid("tile"),
+            title: "Hotels & flights",
+            body: "Vetted properties with real family rooms, sensible flights with seat selection sorted in advance, and check-ins timed to your kids—not a 3 PM standard.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1566073771259-6a8506099945?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Soft-lit hotel suite with a window onto a quiet courtyard",
+          },
+          {
+            id: uid("tile"),
+            title: "Private guides & drivers",
+            body: "Locally trusted guides who actually like children, and drivers who keep car seats, snacks, and small talk in the right balance.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1500835556837-99ac94a94552?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A guided walk through a sunlit historic town",
+          },
+          {
+            id: uid("tile"),
+            title: "Logistics & transfers",
+            body: "Airport meet-and-greet, train tickets, ferry timetables, lift passes, museum bookings, restaurant reservations—the unsexy work that makes a trip feel calm.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1436491865332-7a61a109cc05?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Boarding gate with a calm morning light through tall windows",
+          },
+          {
+            id: uid("tile"),
+            title: "On-trip support",
+            body: "Storms, sick kids, a sudden craving for ice cream at 9 PM in a new city—we re-route, re-book, and recommend in real time, without losing the thread of the trip.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1505761671935-60b3a7427bad?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Family walking together along a coastal promenade",
+          },
+        ],
+      },
+      {
+        id: uid("steps"),
+        type: "process_steps",
+        anchor: "how-we-plan",
+        eyebrow: "How we plan",
+        title: "From first call to the last sunset",
+        body: "A clear path, with you in the loop at the moments that matter—and quietly handled the rest of the time.",
+        steps: [
+          {
+            id: uid("step"),
+            number: "01",
+            title: "Discover",
+            body: "A 30-minute call to learn your family's rhythm—energy, food, naps, the kinds of memories you want more of, and the kinds of trips that haven't worked.",
+          },
+          {
+            id: uid("step"),
+            number: "02",
+            title: "Design",
+            body: "Within a few days you'll see a routed proposal: pacing, hotel choices, key experiences, with options where it matters. We refine until it feels right.",
+          },
+          {
+            id: uid("step"),
+            number: "03",
+            title: "Book",
+            body: "Once approved, we secure every reservation and lock down the logistics. You'll get a single, beautiful itinerary document—nothing to hunt for in your inbox.",
+          },
+          {
+            id: uid("step"),
+            number: "04",
+            title: "Travel",
+            body: "We're a text away the whole time. Weather pivots, mood shifts, missed flights—we adjust without you having to find a hotel desk in a strange airport.",
+          },
+        ],
+      },
+      {
+        id: uid("testi"),
+        type: "testimonial",
+        quote:
+          "We landed in a country we'd never been to with two tired kids, and our driver was already there with our names on a card and snacks in the backseat. From that moment until the goodbye text on day twelve, we never once had to figure something out ourselves.",
+        attribution: "— A Momentella family",
+        sublabel: "First full-service trip · Italy & the islands",
+      },
+      {
+        id: uid("form"),
+        type: "intake_form",
+        anchor: "trip-intake",
+        slug: formSlug,
+        eyebrow: "Tell us about the trip",
+        title: "Start with what you know",
+        body: "Nothing here is set in stone. Share a sketch, a wish list, or a vague pull toward somewhere—we'll fill in the rest together.",
+      },
+    ],
+  };
+}
+
+/**
+ * Seed content for the `/gift-certificates` page — Mother's Day-aware
+ * gifting promo for our itinerary planning packages. The eyebrow on the
+ * hero references the upcoming holiday; admin can update it from the
+ * page builder for other occasions (Father's Day, anniversaries, etc).
+ */
+export function defaultGiftCertificatesPageSchema(): PageSchema {
+  return {
+    version: PAGE_SCHEMA_VERSION,
+    blocks: [
+      {
+        id: uid("hero"),
+        type: "hero",
+        imageUrl:
+          "https://images.unsplash.com/photo-1495121605193-b116b5b9c5fe?auto=format&fit=crop&w=2000&q=80",
+        imageAlt:
+          "Soft morning light over an open journal, fresh flowers, and a coffee cup",
+        eyebrow: "A Mother's Day gift she'll actually use",
+        headline: "Skip the candles—",
+        headlineMuted: "give her a vacation day, designed.",
+        body: "1, 2, or 3-day itinerary plans, gift-wrapped digitally. We'll email her a beautifully presented redemption link, and her dedicated trip designer takes it from there.",
+        primaryCta: { label: "Browse gift plans", href: "/services" },
+        secondaryCta: { label: "How gifting works", href: "#how-it-works" },
+        height: "tall",
+      },
+      {
+        id: uid("intro"),
+        type: "editorial_intro",
+        quote: "Skip the spa basket.",
+        quoteMuted: "Give her a vacation day she'll actually relax through.",
+        paragraphs: [
+          "Mom doesn't need another mug. She needs the day in Lisbon she's been Pinterest-ing for three years, mapped out by someone who understands the difference between a perfect afternoon and a tourist's afternoon.",
+          "Pick a plan. Add a personal note. We'll send her a thoughtful gift email and her own private trip page. She doesn't have to do a thing until she's ready to start dreaming.",
+        ],
+      },
+      {
+        id: uid("tiles"),
+        type: "feature_tiles",
+        eyebrow: "Three plans, three vibes",
+        title: "What you can gift",
+        body: "Every plan is built from scratch by a real travel designer—not a template, not an algorithm.",
+        tiles: [
+          {
+            id: uid("tile"),
+            title: "1-day plan",
+            body: "$149 · One perfect day in a city she's never quite cracked. Hand-picked stops, calm pacing, and a route built around her tastes—not a tour bus.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1502602898657-3e91760cbb34?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A morning view of Paris from a quiet rooftop",
+          },
+          {
+            id: uid("tile"),
+            title: "2-day plan",
+            body: "A long weekend with structure—two full days planned end to end, with a graceful arc from arrival breakfast to last sunset.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1493558103817-58b2924bce98?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A coastal hotel terrace at sunset",
+          },
+          {
+            id: uid("tile"),
+            title: "3-day plan",
+            body: "Half a vacation, stress-free. Three days of curated itinerary—anchor experiences, neighborhood meals, room to breathe.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1469474968028-56623f02e42e?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Mountain landscape under a soft golden sunrise",
+          },
+        ],
+      },
+      {
+        id: uid("steps"),
+        type: "process_steps",
+        anchor: "how-it-works",
+        eyebrow: "How gifting works",
+        title: "Four steps. Five minutes.",
+        body: "Order today and she'll have her gift in her inbox within minutes—or pick a future delivery date if you want it to land on the day itself.",
+        steps: [
+          {
+            id: uid("step"),
+            number: "01",
+            title: "Pick a plan",
+            body: "1, 2, or 3 days—based on whether she wants a perfect afternoon, a long weekend, or half a vacation handled.",
+          },
+          {
+            id: uid("step"),
+            number: "02",
+            title: "Write her a note",
+            body: "A few lines from you, included in her gift email. We frame it beautifully—no awkward generic template language.",
+          },
+          {
+            id: uid("step"),
+            number: "03",
+            title: "We send the gift",
+            body: "She gets a Momentella-branded email with your note, the plan she's been gifted, and a one-tap link to redeem when she's ready.",
+          },
+          {
+            id: uid("step"),
+            number: "04",
+            title: "Her designer takes over",
+            body: "When she redeems, her own trip page comes to life and her designer reaches out to start the conversation. You get a note from us when she's used it.",
+          },
+        ],
+      },
+      {
+        id: uid("testi"),
+        type: "testimonial",
+        quote:
+          "I gave my mom the 2-day plan for her London trip. She told me she finally felt like someone took the planning weight off her shoulders—she just got to be there.",
+        attribution: "— A Momentella gift-giver",
+        sublabel: "Gift recipient · London · 2-day plan",
+      },
+      {
+        id: uid("cta"),
+        type: "cta_split",
+        eyebrow: "Ready to gift?",
+        title: "Browse plans and add your note",
+        cta: { label: "See the plans →", href: "/services" },
+      },
+    ],
+  };
+}
+
+/**
  * Seed content for the `/connect` page. Embeds the intake form keyed by slug
  * (defaults to `family-trip` — the admin can switch forms in the page builder).
  */
