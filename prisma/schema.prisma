@@ -28,6 +28,7 @@ model User {
   intakeSubmissions IntakeSubmission[]
   ordersBought      Order[]            @relation("OrderBuyer")
   giftsRedeemed     GiftCertificate[]  @relation("GiftRedeemer")
+  analyticsEvents   AnalyticsEvent[]
 
   @@unique([email])
   @@map("user")
@@ -508,6 +509,68 @@ model SiteNavConfig {
   updatedAt DateTime @updatedAt
 
   @@map("site_nav_config")
+}
+
+/// Anonymous analytics events. One row per pageview ping.
+/// Privacy: no raw IPs stored — only a daily-salted SHA-256 hash
+/// (`ipHash`) so we can compute unique-visitor counts without retaining
+/// the underlying address. Logged-in users are linked when available.
+model AnalyticsEvent {
+  id String @id @default(cuid())
+
+  /// Anonymous client-side ID (cookie/localStorage), persists across sessions.
+  visitorId String
+  /// Per-tab session ID, rotates after ~30min of inactivity.
+  sessionId String
+  /// Linked user when the visitor is signed in. SetNull on user delete.
+  userId    String?
+  user      User?   @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  /// Page path (excluding query) and full URL with query.
+  path     String
+  pathFull String?
+  /// document.title at the time of the pageview.
+  title    String?
+
+  /// Where they came from (full document.referrer URL) and just the host.
+  referrer     String?
+  referrerHost String?
+
+  /// UTM tags from the URL (?utm_source=…)
+  utmSource   String?
+  utmMedium   String?
+  utmCampaign String?
+  utmTerm     String?
+  utmContent  String?
+
+  /// Server-derived geo from CF-IPCountry / CF-IPCity headers.
+  country String?
+  region  String?
+  city    String?
+
+  /// Parsed user-agent.
+  browser        String?
+  browserVersion String?
+  os             String?
+  /// "mobile" | "tablet" | "desktop" | "bot".
+  device         String?
+
+  /// Engagement: filled in by the next pageview's ping (timeOnPrev).
+  durationMs Int?
+
+  /// Daily-salted SHA-256 of the originating IP. NEVER store raw IP.
+  ipHash String
+
+  createdAt DateTime @default(now())
+
+  @@index([createdAt])
+  @@index([visitorId])
+  @@index([sessionId])
+  @@index([userId])
+  @@index([path])
+  @@index([country])
+  @@index([referrerHost])
+  @@map("analytics_event")
 }
 
 /// Configurable trip intake: multiple forms, versioned definitions (JSON schema).

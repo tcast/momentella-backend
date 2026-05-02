@@ -30,7 +30,8 @@
     "fastify-raw-body": "^5.0.0",
     "prisma": "^6.19.3",
     "stripe": "^22.1.0",
-    "svix": "^1.92.2"
+    "svix": "^1.92.2",
+    "ua-parser-js": "^2.0.9"
   },
   "devDependencies": {
     "@types/node": "^25.6.0",

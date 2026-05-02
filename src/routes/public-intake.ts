@@ -10,6 +10,13 @@ import {
   parseSiteNavConfig,
 } from "../lib/site-nav-schema.js";
 import {
+  classifyReferrer,
+  geoFromHeaders,
+  getClientIp,
+  hashIp,
+  parseUserAgent,
+} from "../lib/analytics.js";
+import {
   checkIntakeSubmitRateLimit,
   clientIpFromRequest,
 } from "../lib/rate-limit-memory.js";
@@ -57,6 +64,111 @@ function rankDestination(
 
 /** Public intake — no auth required; optional session links submission to user. */
 export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
+  /**
+   * Anonymous analytics ingest. Records one event per pageview ping.
+   * Strips any client-side claims about geo / IP / browser — those
+   * come from the request headers we trust. Body fields are short and
+   * loosely validated to keep the endpoint hot-path cheap.
+   *
+   * The Do Not Track header is honored — events from DNT users are
+   * silently 204'd.
+   */
+  app.post("/analytics/track", async (request, reply) => {
+    const dnt = request.headers["dnt"];
+    if (dnt === "1") return reply.status(204).send();
+
+    const body = request.body as Record<string, unknown> | null;
+    if (!body || typeof body !== "object") {
+      return reply.status(400).send({ error: "Invalid body" });
+    }
+
+    function str(v: unknown, max = 500): string | null {
+      if (typeof v !== "string") return null;
+      const t = v.trim();
+      if (!t) return null;
+      return t.length > max ? t.slice(0, max) : t;
+    }
+
+    const visitorId = str(body.visitorId, 64);
+    const sessionId = str(body.sessionId, 64);
+    const path = str(body.path, 500);
+    if (!visitorId || !sessionId || !path) {
+      return reply.status(400).send({ error: "Missing visitorId/sessionId/path" });
+    }
+
+    const ip = getClientIp(request);
+    const ua = parseUserAgent(
+      typeof request.headers["user-agent"] === "string"
+        ? request.headers["user-agent"]
+        : null,
+    );
+    if (ua.device === "bot") return reply.status(204).send();
+
+    const geo = geoFromHeaders(request);
+
+    // Determine "self" host from the page URL the client claimed to be
+    // on, so an in-site nav doesn't show as a referrer to itself.
+    let selfHost: string | null = null;
+    try {
+      const pf = str(body.pathFull, 1000);
+      if (pf) selfHost = new URL(pf).hostname;
+    } catch {
+      selfHost = null;
+    }
+    const cls = classifyReferrer(str(body.referrer, 1000), selfHost);
+
+    // Optional session — link to logged-in user if available.
+    let userId: string | null = null;
+    try {
+      const s = await getSession(request);
+      userId = s?.user?.id ?? null;
+    } catch {
+      userId = null;
+    }
+
+    const durationMsRaw = body.durationMs;
+    const durationMs =
+      typeof durationMsRaw === "number" &&
+      Number.isFinite(durationMsRaw) &&
+      durationMsRaw >= 0 &&
+      durationMsRaw < 60 * 60 * 1000 // hard cap at 1h, anything more is suspect
+        ? Math.round(durationMsRaw)
+        : null;
+
+    try {
+      await prisma.analyticsEvent.create({
+        data: {
+          visitorId,
+          sessionId,
+          userId,
+          path,
+          pathFull: str(body.pathFull, 1000),
+          title: str(body.title, 300),
+          referrer: cls.referrer,
+          referrerHost: cls.referrerHost,
+          utmSource: str(body.utmSource, 100),
+          utmMedium: str(body.utmMedium, 100),
+          utmCampaign: str(body.utmCampaign, 200),
+          utmTerm: str(body.utmTerm, 200),
+          utmContent: str(body.utmContent, 200),
+          country: geo.country,
+          region: geo.region,
+          city: geo.city,
+          browser: ua.browser,
+          browserVersion: ua.browserVersion,
+          os: ua.os,
+          device: ua.device,
+          durationMs,
+          ipHash: hashIp(ip || "unknown"),
+        },
+      });
+    } catch (err) {
+      app.log.warn({ err }, "[analytics] insert failed");
+      // Always return 204 — never surface DB errors to the client tracker.
+    }
+    return reply.status(204).send();
+  });
+
   /**
    * Editable site navigation. Returns the current published config —
    * always returns a valid shape (defaults if no row exists or stored
