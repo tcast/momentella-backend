@@ -11,7 +11,7 @@ import {
 } from "../lib/site-nav-schema.js";
 import {
   classifyReferrer,
-  geoFromHeaders,
+  resolveGeo,
   getClientIp,
   hashIp,
   parseUserAgent,
@@ -104,7 +104,7 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     );
     if (ua.device === "bot") return reply.status(204).send();
 
-    const geo = geoFromHeaders(request);
+    const geo = resolveGeo(request, ip);
 
     // Determine "self" host from the page URL the client claimed to be
     // on, so an in-site nav doesn't show as a referrer to itself.

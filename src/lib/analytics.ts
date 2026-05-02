@@ -7,6 +7,7 @@
  */
 
 import crypto from "node:crypto";
+import geoip from "geoip-lite";
 import { UAParser } from "ua-parser-js";
 import type { FastifyRequest } from "fastify";
 
@@ -92,23 +93,66 @@ function pickHeader(v: string | string[] | undefined): string | null {
   return v.trim() || null;
 }
 
-export interface GeoFromHeaders {
+export interface ResolvedGeo {
   country: string | null;
   region: string | null;
   city: string | null;
 }
 
 /**
- * Best-effort geo from Cloudflare-style headers. Returns nulls if not
- * proxied through Cloudflare. (Plain Railway sees no geo headers; once
- * the site is on Cloudflare these populate automatically.)
+ * Strip private / loopback / link-local addresses we won't be able to
+ * resolve. Returns null for unusable inputs.
  */
-export function geoFromHeaders(req: FastifyRequest): GeoFromHeaders {
+function isPublicIp(ip: string): boolean {
+  if (!ip) return false;
+  if (ip === "::1" || ip === "127.0.0.1") return false;
+  if (
+    ip.startsWith("10.") ||
+    ip.startsWith("192.168.") ||
+    ip.startsWith("169.254.") ||
+    ip.startsWith("fe80:") ||
+    ip.startsWith("fc00:") ||
+    ip.startsWith("fd00:")
+  )
+    return false;
+  // 172.16.0.0 – 172.31.255.255
+  if (ip.startsWith("172.")) {
+    const second = parseInt(ip.split(".")[1] ?? "0", 10);
+    if (second >= 16 && second <= 31) return false;
+  }
+  return true;
+}
+
+/**
+ * Resolve country / region / city for a request. Uses Cloudflare-style
+ * headers first when available (faster, more authoritative than the
+ * bundled DB), then falls back to a local geoip-lite lookup against the
+ * client IP. Returns nulls only for private / unknown addresses.
+ */
+export function resolveGeo(req: FastifyRequest, ip: string): ResolvedGeo {
   const h = req.headers;
+  const cfCountry = pickHeader(h["cf-ipcountry"]);
+  const cfRegion = pickHeader(h["cf-region"]);
+  const cfCity = pickHeader(h["cf-ipcity"]);
+
+  // Even when Cloudflare proxy isn't enabled, occasionally cf-ipcountry
+  // may show "XX" for unknown — treat that as missing.
+  const cfHasCountry = cfCountry && cfCountry !== "XX";
+
+  // Local DB lookup — only if we have a useful public IP.
+  let dbHit: geoip.Lookup | null = null;
+  if (isPublicIp(ip)) {
+    try {
+      dbHit = geoip.lookup(ip);
+    } catch {
+      dbHit = null;
+    }
+  }
+
   return {
-    country: pickHeader(h["cf-ipcountry"]),
-    region: pickHeader(h["cf-region"]),
-    city: pickHeader(h["cf-ipcity"]),
+    country: cfHasCountry ? cfCountry : (dbHit?.country ?? null),
+    region: cfRegion ?? (dbHit?.region ?? null),
+    city: cfCity ?? (dbHit?.city ?? null),
   };
 }
 
