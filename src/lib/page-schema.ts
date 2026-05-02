@@ -126,6 +126,11 @@ export interface IntakeFormBlock extends Base {
  * + checkout CTA. `mode` controls the framing:
  *   "browse" — primary CTA "Get this plan", secondary "Send as a gift"
  *   "gift"   — primary CTA "Gift this plan", secondary "Or buy for myself"
+ *
+ * If `productSlugs` is set and non-empty, only those products are shown,
+ * in that exact order. Empty / undefined = show all published products
+ * in their default catalog order. Missing slugs are silently skipped so
+ * deleting a product never breaks an existing page.
  */
 export interface ProductsGridBlock extends Base {
   type: "products_grid";
@@ -133,6 +138,7 @@ export interface ProductsGridBlock extends Base {
   eyebrow?: string;
   title?: string;
   body?: string;
+  productSlugs?: string[];
 }
 
 export type PageBlock =
