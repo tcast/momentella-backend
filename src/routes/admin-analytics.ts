@@ -515,6 +515,282 @@ export const adminAnalyticsRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // ─── Funnel analysis ─────────────────────────────────────────────────
+  /**
+   * Sequential conversion analysis. Steps are passed as a repeated
+   * `steps` query param (or comma-separated single value) in the form
+   * "kind:value", where kind is "path" or "event":
+   *   ?steps=path:/gift-certificates&steps=path:/services&steps=event:checkout_completed
+   *
+   * For each step i, we count distinct sessions s such that the first
+   * occurrence of step j happened before the first occurrence of step
+   * j+1 for every j ≤ i. Single SQL query via conditional aggregation.
+   */
+  app.get("/funnel", async (request, reply) => {
+    const f = parseFilters(request);
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const stepsRaw = q.steps;
+    const stepsList: string[] = Array.isArray(stepsRaw)
+      ? (stepsRaw as string[])
+      : typeof stepsRaw === "string"
+        ? stepsRaw.split(",")
+        : [];
+    const parsed: { kind: "path" | "event"; value: string }[] = [];
+    for (const s of stepsList) {
+      const t = s.trim();
+      if (!t) continue;
+      const [kindRaw, ...rest] = t.split(":");
+      const value = rest.join(":");
+      if ((kindRaw === "path" || kindRaw === "event") && value) {
+        parsed.push({ kind: kindRaw, value: value.slice(0, 200) });
+      }
+      if (parsed.length >= 8) break;
+    }
+    if (parsed.length < 2) {
+      return reply
+        .status(400)
+        .send({ error: "Funnel needs at least 2 steps" });
+    }
+
+    // Build the per-session aggregation: for each step, the timestamp
+    // of the first event matching that step's condition.
+    const stepCols: Prisma.Sql[] = parsed.map((step, i) => {
+      const cond =
+        step.kind === "path"
+          ? Prisma.sql`"path" = ${step.value}`
+          : Prisma.sql`"eventType" = ${step.value}`;
+      return Prisma.sql`MIN(CASE WHEN ${cond} THEN "createdAt" END) AS step_${Prisma.raw(String(i))}_at`;
+    });
+
+    const aggSql = Prisma.sql`
+      SELECT "sessionId",
+             ${Prisma.join(stepCols, ", ")}
+      FROM analytics_event
+      WHERE ${sqlFiltersFragment(f)}
+      GROUP BY "sessionId"
+    `;
+
+    // For step i, "reached" = step_0_at IS NOT NULL AND step_1_at >
+    // step_0_at AND ... AND step_i_at > step_{i-1}_at.
+    const filters: Prisma.Sql[] = parsed.map((_, i) => {
+      const conds: Prisma.Sql[] = [];
+      for (let j = 0; j <= i; j += 1) {
+        if (j === 0) {
+          conds.push(Prisma.sql`step_0_at IS NOT NULL`);
+        } else {
+          conds.push(
+            Prisma.sql`step_${Prisma.raw(String(j))}_at > step_${Prisma.raw(String(j - 1))}_at`,
+          );
+        }
+      }
+      return conds.reduce(
+        (acc, c, idx) => (idx === 0 ? c : Prisma.sql`${acc} AND ${c}`),
+        Prisma.sql``,
+      );
+    });
+
+    const filterCols = filters.map(
+      (cond, i) =>
+        Prisma.sql`COUNT(*) FILTER (WHERE ${cond})::bigint AS reached_${Prisma.raw(String(i))}`,
+    );
+
+    const result = await prisma.$queryRaw<Record<string, bigint>[]>(Prisma.sql`
+      WITH per_session AS (${aggSql})
+      SELECT ${Prisma.join(filterCols, ", ")}
+      FROM per_session
+    `);
+
+    const row = result[0] ?? {};
+    const reached = parsed.map((_, i) => Number(row[`reached_${i}`] ?? 0));
+
+    // Step results with drop-off vs. previous and conversion rate from step 0.
+    const startCount = reached[0] ?? 0;
+    const steps = parsed.map((step, i) => {
+      const count = reached[i] ?? 0;
+      const prev = i === 0 ? count : (reached[i - 1] ?? 0);
+      return {
+        index: i,
+        kind: step.kind,
+        value: step.value,
+        sessions: count,
+        dropFromPrev: i === 0 ? 0 : prev - count,
+        rateFromPrev: prev > 0 ? count / prev : 0,
+        rateFromStart: startCount > 0 ? count / startCount : 0,
+      };
+    });
+
+    return { range: f.range, steps };
+  });
+
+  // ─── Conversions by source / page ────────────────────────────────────
+  /**
+   * For a given eventType, break down by where the converting visitor
+   * first entered the session (utmSource → referrerHost → "(direct)")
+   * and the entry path. Useful for "where do my paying visitors come
+   * from?" questions.
+   */
+  app.get("/conversions-by-source", async (request, reply) => {
+    const f = parseFilters(request);
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const eventType = pickStr(q, "eventType");
+    if (!eventType) {
+      return reply.status(400).send({ error: "eventType required" });
+    }
+
+    // Sessions that included this conversion event.
+    const convertingSessions = await prisma.analyticsEvent.findMany({
+      where: {
+        ...whereFromFilters(f),
+        eventType,
+      },
+      distinct: ["sessionId"],
+      select: { sessionId: true, eventValue: true },
+    });
+    if (convertingSessions.length === 0) {
+      return { eventType, total: 0, sources: [], entryPaths: [] };
+    }
+    const sessionIds = convertingSessions.map((s) => s.sessionId);
+
+    // First event in each converting session — the entry point.
+    const sources = await prisma.$queryRaw<
+      Array<{
+        source: string;
+        sessions: bigint;
+      }>
+    >(Prisma.sql`
+      WITH first_events AS (
+        SELECT DISTINCT ON ("sessionId")
+               "sessionId",
+               COALESCE(NULLIF("utmSource", ''), "referrerHost", '(direct)') AS source
+        FROM analytics_event
+        WHERE "sessionId" IN (${Prisma.join(sessionIds)})
+        ORDER BY "sessionId", "createdAt" ASC
+      )
+      SELECT source, COUNT(*)::bigint AS sessions
+      FROM first_events
+      GROUP BY source
+      ORDER BY sessions DESC
+      LIMIT 25
+    `);
+
+    const entryPaths = await prisma.$queryRaw<
+      Array<{ path: string; sessions: bigint }>
+    >(Prisma.sql`
+      WITH first_events AS (
+        SELECT DISTINCT ON ("sessionId")
+               "sessionId", "path"
+        FROM analytics_event
+        WHERE "sessionId" IN (${Prisma.join(sessionIds)})
+        ORDER BY "sessionId", "createdAt" ASC
+      )
+      SELECT path, COUNT(*)::bigint AS sessions
+      FROM first_events
+      GROUP BY path
+      ORDER BY sessions DESC
+      LIMIT 25
+    `);
+
+    return {
+      eventType,
+      total: convertingSessions.length,
+      sources: sources.map((r) => ({
+        source: r.source,
+        sessions: Number(r.sessions),
+      })),
+      entryPaths: entryPaths.map((r) => ({
+        path: r.path,
+        sessions: Number(r.sessions),
+      })),
+    };
+  });
+
+  // ─── CSV export ──────────────────────────────────────────────────────
+  /**
+   * Stream a CSV of recent events. Type = "events" returns goal events
+   * only, "pageviews" returns plain pageviews, "all" returns everything.
+   * Capped at 10k rows per call. Filters apply.
+   */
+  app.get("/export.csv", async (request, reply) => {
+    const f = parseFilters(request);
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const type = pickStr(q, "type") ?? "all"; // "all" | "events" | "pageviews"
+    const where = whereFromFilters(f);
+    if (type === "events") (where as Record<string, unknown>).eventType = { not: null };
+    else if (type === "pageviews") (where as Record<string, unknown>).eventType = null;
+
+    const rows = await prisma.analyticsEvent.findMany({
+      where,
+      orderBy: { createdAt: "desc" },
+      take: 10_000,
+      select: {
+        createdAt: true,
+        visitorId: true,
+        sessionId: true,
+        path: true,
+        title: true,
+        eventType: true,
+        eventValue: true,
+        referrerHost: true,
+        utmSource: true,
+        utmMedium: true,
+        utmCampaign: true,
+        country: true,
+        region: true,
+        city: true,
+        device: true,
+        browser: true,
+        os: true,
+        durationMs: true,
+        userId: true,
+      },
+    });
+
+    const cols = [
+      "createdAt",
+      "visitorId",
+      "sessionId",
+      "path",
+      "title",
+      "eventType",
+      "eventValue",
+      "referrerHost",
+      "utmSource",
+      "utmMedium",
+      "utmCampaign",
+      "country",
+      "region",
+      "city",
+      "device",
+      "browser",
+      "os",
+      "durationMs",
+      "userId",
+    ] as const;
+
+    function csvEscape(v: unknown): string {
+      if (v === null || v === undefined) return "";
+      const s = v instanceof Date ? v.toISOString() : String(v);
+      if (s.includes(",") || s.includes('"') || s.includes("\n")) {
+        return `"${s.replace(/"/g, '""')}"`;
+      }
+      return s;
+    }
+
+    const lines: string[] = [cols.join(",")];
+    for (const r of rows) {
+      lines.push(
+        cols.map((c) => csvEscape((r as Record<string, unknown>)[c])).join(","),
+      );
+    }
+    const filename = `momentella-analytics-${type}-${new Date().toISOString().slice(0, 10)}.csv`;
+    reply.header("content-type", "text/csv; charset=utf-8");
+    reply.header(
+      "content-disposition",
+      `attachment; filename="${filename}"`,
+    );
+    return reply.send(lines.join("\n"));
+  });
+
   // ─── Realtime (last 5 minutes) ───────────────────────────────────────
   app.get("/realtime", async () => {
     const since = new Date(Date.now() - 5 * 60_000);
