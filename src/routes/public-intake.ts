@@ -96,6 +96,20 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: "Missing visitorId/sessionId/path" });
     }
 
+    // Goal events: snake_case, past tense, e.g. "checkout_completed".
+    // Cap to 64 chars and normalize.
+    const rawType = str(body.eventType, 64);
+    const eventType = rawType
+      ? rawType.toLowerCase().replace(/[^a-z0-9_]/g, "_").slice(0, 64)
+      : null;
+    const eventValueRaw = body.eventValue;
+    const eventValue =
+      typeof eventValueRaw === "number" &&
+      Number.isFinite(eventValueRaw) &&
+      Math.abs(eventValueRaw) < 1_000_000_000
+        ? Math.round(eventValueRaw)
+        : null;
+
     const ip = getClientIp(request);
     const ua = parseUserAgent(
       typeof request.headers["user-agent"] === "string"
@@ -160,6 +174,8 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
           device: ua.device,
           durationMs,
           ipHash: hashIp(ip || "unknown"),
+          eventType,
+          eventValue,
         },
       });
     } catch (err) {

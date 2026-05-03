@@ -561,6 +561,13 @@ model AnalyticsEvent {
   /// Daily-salted SHA-256 of the originating IP. NEVER store raw IP.
   ipHash String
 
+  /// Goal/event type. NULL for plain pageviews. Examples:
+  /// "checkout_completed", "gift_redeemed", "intake_submitted",
+  /// "signup", "signin". Conventions: snake_case, past_tense.
+  eventType  String?
+  /// Optional numeric value (cents for revenue events, count for others).
+  eventValue Int?
+
   createdAt DateTime @default(now())
 
   @@index([createdAt])
@@ -570,6 +577,7 @@ model AnalyticsEvent {
   @@index([path])
   @@index([country])
   @@index([referrerHost])
+  @@index([eventType])
   @@map("analytics_event")
 }
 

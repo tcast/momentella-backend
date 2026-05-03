@@ -356,6 +356,165 @@ export const adminAnalyticsRoutes: FastifyPluginAsync = async (app) => {
     return rows;
   });
 
+  // ─── Goal events (conversions) ───────────────────────────────────────
+  app.get("/events", async (request) => {
+    const f = parseFilters(request);
+
+    // Total sessions in the same range — denominator for conversion rate.
+    const sessionsAll = await prisma.analyticsEvent.findMany({
+      where: whereFromFilters(f),
+      distinct: ["sessionId"],
+      select: { sessionId: true },
+    });
+    const totalSessions = sessionsAll.length;
+
+    const rows = await prisma.$queryRaw<
+      Array<{
+        eventType: string;
+        events: bigint;
+        visitors: bigint;
+        sessions: bigint;
+        revenue: bigint | null;
+      }>
+    >(Prisma.sql`
+      SELECT "eventType",
+             COUNT(*)::bigint AS events,
+             COUNT(DISTINCT "visitorId")::bigint AS visitors,
+             COUNT(DISTINCT "sessionId")::bigint AS sessions,
+             SUM("eventValue")::bigint AS revenue
+      FROM analytics_event
+      WHERE ${sqlFiltersFragment(f)}
+        AND "eventType" IS NOT NULL
+      GROUP BY "eventType"
+      ORDER BY events DESC
+      LIMIT 50
+    `);
+
+    return {
+      totalSessions,
+      events: rows.map((r) => ({
+        eventType: r.eventType,
+        events: Number(r.events),
+        visitors: Number(r.visitors),
+        sessions: Number(r.sessions),
+        revenueCents: r.revenue !== null ? Number(r.revenue) : 0,
+        conversionRate:
+          totalSessions > 0 ? Number(r.sessions) / totalSessions : 0,
+      })),
+    };
+  });
+
+  // ─── Entry / Exit pages ──────────────────────────────────────────────
+  app.get("/entry-pages", async (request) => {
+    const f = parseFilters(request);
+    const rows = await prisma.$queryRaw<
+      Array<{ path: string; sessions: bigint }>
+    >(Prisma.sql`
+      WITH entries AS (
+        SELECT DISTINCT ON ("sessionId")
+               "sessionId", "path"
+        FROM analytics_event
+        WHERE ${sqlFiltersFragment(f)}
+        ORDER BY "sessionId", "createdAt" ASC
+      )
+      SELECT "path", COUNT(*)::bigint AS sessions
+      FROM entries
+      GROUP BY "path"
+      ORDER BY sessions DESC
+      LIMIT 25
+    `);
+    return rows.map((r) => ({
+      path: r.path,
+      sessions: Number(r.sessions),
+    }));
+  });
+
+  app.get("/exit-pages", async (request) => {
+    const f = parseFilters(request);
+    const rows = await prisma.$queryRaw<
+      Array<{ path: string; sessions: bigint }>
+    >(Prisma.sql`
+      WITH exits AS (
+        SELECT DISTINCT ON ("sessionId")
+               "sessionId", "path"
+        FROM analytics_event
+        WHERE ${sqlFiltersFragment(f)}
+        ORDER BY "sessionId", "createdAt" DESC
+      )
+      SELECT "path", COUNT(*)::bigint AS sessions
+      FROM exits
+      GROUP BY "path"
+      ORDER BY sessions DESC
+      LIMIT 25
+    `);
+    return rows.map((r) => ({
+      path: r.path,
+      sessions: Number(r.sessions),
+    }));
+  });
+
+  // ─── Page flow (where they came from / went to next) ────────────────
+  /**
+   * For sessions that included `?path=`, what page came immediately
+   * before and after on the same session? Useful for understanding how
+   * a page fits into the visitor journey. Requires the path filter.
+   */
+  app.get("/page-flow", async (request, reply) => {
+    const f = parseFilters(request);
+    if (!f.path) {
+      return reply.status(400).send({ error: "path filter required" });
+    }
+    // Use window functions to compute prev/next path within each session.
+    // Filter by date range here too so flow respects the active range.
+    const rows = await prisma.$queryRaw<
+      Array<{
+        prev_path: string | null;
+        next_path: string | null;
+      }>
+    >(Prisma.sql`
+      WITH ranged AS (
+        SELECT "sessionId", "path", "createdAt",
+               LAG("path") OVER (PARTITION BY "sessionId" ORDER BY "createdAt") AS prev_path,
+               LEAD("path") OVER (PARTITION BY "sessionId" ORDER BY "createdAt") AS next_path
+        FROM analytics_event
+        WHERE "createdAt" >= ${f.since}
+      )
+      SELECT prev_path, next_path
+      FROM ranged
+      WHERE "path" = ${f.path}
+    `);
+
+    const prevCounts = new Map<string, number>();
+    const nextCounts = new Map<string, number>();
+    let entryCount = 0;
+    let exitCount = 0;
+    for (const r of rows) {
+      if (r.prev_path) {
+        prevCounts.set(r.prev_path, (prevCounts.get(r.prev_path) ?? 0) + 1);
+      } else {
+        entryCount += 1;
+      }
+      if (r.next_path) {
+        nextCounts.set(r.next_path, (nextCounts.get(r.next_path) ?? 0) + 1);
+      } else {
+        exitCount += 1;
+      }
+    }
+    function topN(m: Map<string, number>, n: number) {
+      return Array.from(m.entries())
+        .sort((a, b) => b[1] - a[1])
+        .slice(0, n)
+        .map(([path, count]) => ({ path, count }));
+    }
+    return {
+      total: rows.length,
+      entryCount,
+      exitCount,
+      previous: topN(prevCounts, 15),
+      next: topN(nextCounts, 15),
+    };
+  });
+
   // ─── Realtime (last 5 minutes) ───────────────────────────────────────
   app.get("/realtime", async () => {
     const since = new Date(Date.now() - 5 * 60_000);
@@ -391,13 +550,44 @@ export const adminAnalyticsRoutes: FastifyPluginAsync = async (app) => {
     const f = parseFilters(request);
     const q = (request.query as Record<string, unknown>) ?? {};
     const page = Math.max(1, parseInt(pickStr(q, "page") ?? "1", 10) || 1);
+    const search = pickStr(q, "q");
     const limit = 25;
     const offset = (page - 1) * limit;
+
+    // If search is present, restrict to visitors linked to a matching user.
+    let searchVisitorIds: string[] | null = null;
+    if (search) {
+      const term = `%${search.toLowerCase()}%`;
+      const matchingUsers = await prisma.$queryRaw<
+        Array<{ id: string }>
+      >(Prisma.sql`
+        SELECT id FROM "user"
+        WHERE LOWER("email") LIKE ${term} OR LOWER("name") LIKE ${term}
+        LIMIT 200
+      `);
+      const userIds = matchingUsers.map((u) => u.id);
+      if (userIds.length === 0) {
+        return { total: 0, page, limit, visitors: [] };
+      }
+      const visIds = await prisma.analyticsEvent.findMany({
+        where: { userId: { in: userIds }, createdAt: { gte: f.since } },
+        distinct: ["visitorId"],
+        select: { visitorId: true },
+      });
+      searchVisitorIds = visIds.map((v) => v.visitorId);
+      if (searchVisitorIds.length === 0) {
+        return { total: 0, page, limit, visitors: [] };
+      }
+    }
+
+    const searchClause = searchVisitorIds
+      ? Prisma.sql`AND "visitorId" IN (${Prisma.join(searchVisitorIds)})`
+      : Prisma.sql``;
 
     const totalRow = await prisma.$queryRaw<Array<{ n: bigint }>>(Prisma.sql`
       SELECT COUNT(DISTINCT "visitorId")::bigint AS n
       FROM analytics_event
-      WHERE ${sqlFiltersFragment(f)}
+      WHERE ${sqlFiltersFragment(f)} ${searchClause}
     `);
     const total = Number(totalRow[0]?.n ?? 0);
 
@@ -428,7 +618,7 @@ export const adminAnalyticsRoutes: FastifyPluginAsync = async (app) => {
                COUNT(DISTINCT "sessionId")::bigint AS "sessionCount",
                COUNT(*)::bigint AS "pageviewCount"
         FROM analytics_event
-        WHERE ${sqlFiltersFragment(f)}
+        WHERE ${sqlFiltersFragment(f)} ${searchClause}
         GROUP BY "visitorId"
       )
       SELECT a."visitorId",
