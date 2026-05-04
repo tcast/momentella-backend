@@ -96,6 +96,14 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
       return reply.status(400).send({ error: "Missing visitorId/sessionId/path" });
     }
 
+    // Defense-in-depth: even if the frontend tracker misfires for any
+    // reason (or someone replays a payload), drop admin-route events
+    // server-side. Admin activity is internal team usage, not visitor
+    // behavior, and pollutes every analytics chart.
+    if (path === "/admin" || path.startsWith("/admin/")) {
+      return reply.status(204).send();
+    }
+
     // Goal events: snake_case, past tense, e.g. "checkout_completed".
     // Cap to 64 chars and normalize.
     const rawType = str(body.eventType, 64);
