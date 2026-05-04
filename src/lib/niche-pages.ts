@@ -224,9 +224,11 @@ export const NICHE_PAGES: NicheConfig[] = [
     testimonialSublabel: "First family trip · Italy & the islands",
   },
 
+  // family-vacations keeps the existing family-trip form (already family-tuned).
   {
     slug: "multigenerational-trips",
     name: "Multigenerational trips",
+    formSlug: "multigenerational-intake",
     description: "Multigenerational and family reunion travel landing page",
     metaTitle: "Multigenerational Trip Planning · Momentella",
     metaDescription:
@@ -314,6 +316,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "couples-trips",
     name: "Couples trips",
+    formSlug: "couples-intake",
     description: "Romantic couples travel and weekend getaways",
     metaTitle: "Couples Trips & Romantic Getaways · Momentella",
     metaDescription:
@@ -400,6 +403,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "honeymoons",
     name: "Honeymoons",
+    formSlug: "honeymoon-intake",
     description: "Honeymoon trip planning",
     metaTitle: "Honeymoon Planning · Momentella",
     metaDescription:
@@ -485,6 +489,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "babymoons",
     name: "Babymoons",
+    formSlug: "babymoon-intake",
     description: "Babymoon trip planning for expecting couples",
     metaTitle: "Babymoon Planning · Momentella",
     metaDescription:
@@ -571,6 +576,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "destination-weddings",
     name: "Destination weddings",
+    formSlug: "destination-wedding-intake",
     description: "Destination wedding planning",
     metaTitle: "Destination Wedding Planning · Momentella",
     metaDescription:
@@ -658,6 +664,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "anniversary-trips",
     name: "Anniversary trips",
+    formSlug: "anniversary-intake",
     description: "Anniversary milestone trip planning",
     metaTitle: "Anniversary Trip Planning · Momentella",
     metaDescription:
@@ -745,6 +752,7 @@ export const NICHE_PAGES: NicheConfig[] = [
   {
     slug: "solo-travel",
     name: "Solo travel",
+    formSlug: "solo-travel-intake",
     description: "Solo travel trip planning",
     metaTitle: "Solo Travel Planning · Momentella",
     metaDescription:

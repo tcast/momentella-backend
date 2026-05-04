@@ -53,6 +53,8 @@ export interface FeatureTile {
   body: string;
   imageUrl: string;
   imageAlt: string;
+  /** Optional — when set, the tile becomes a clickable link to this URL. */
+  href?: string;
 }
 
 export interface FeatureTilesBlock extends Base {
@@ -229,6 +231,88 @@ export function defaultHomePageSchema(): PageSchema {
         paragraphs: [
           "Momentella is a travel studio for families who want depth without chaos—private drivers when jet lag hits, kid-friendly guides who actually like children, and hotels that understand early bedtimes.",
           "We borrow the editorial calm of a quiet magazine and the clarity of a well-run home: honest pacing, thoughtful defaults, and itineraries that leave space for ice cream stops and spontaneous detours.",
+        ],
+      },
+      {
+        id: uid("niche-tiles"),
+        type: "feature_tiles",
+        anchor: "trip-types",
+        eyebrow: "We plan trips for",
+        title: "Pick the trip you're dreaming of",
+        body: "Each one designed differently — different questions, different hotels, different rhythm. Click through to see what we plan for your kind of trip.",
+        tiles: [
+          {
+            id: uid("tile"),
+            title: "Family vacations",
+            body: "Hotels with cribs, guides who like kids, pacing built around real children.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1502920917128-1aa500764cbd?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Family walking together along a quiet coastal path",
+            href: "/family-vacations",
+          },
+          {
+            id: uid("tile"),
+            title: "Multigenerational",
+            body: "Three generations, one beautifully run trip — split-track days, shared anchor moments.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1600585154340-be6161a56a0c?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Spacious villa terrace at golden hour for extended family",
+            href: "/multigenerational-trips",
+          },
+          {
+            id: uid("tile"),
+            title: "Couples",
+            body: "Long weekends, anniversaries, just-because escapes. Hotels with character, dinners worth flying for.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1530229540764-5f6ab595fe43?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A couple at a quiet rooftop terrace at golden hour",
+            href: "/couples-trips",
+          },
+          {
+            id: uid("tile"),
+            title: "Honeymoons",
+            body: "Designed during the engagement so you arrive, breathe, and remember why you did all of that.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1469854523086-cc02fe5d8800?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A romantic destination at golden hour",
+            href: "/honeymoons",
+          },
+          {
+            id: uid("tile"),
+            title: "Babymoons",
+            body: "One last calm trip before the baby — pregnancy-aware logistics, hotels with proper bathtubs.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1495121605193-b116b5b9c5fe?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Soft morning light with flowers and a journal",
+            href: "/babymoons",
+          },
+          {
+            id: uid("tile"),
+            title: "Destination weddings",
+            body: "Designed as a weekend, not a ceremony — welcome dinner, guest logistics, Sunday brunch.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1519225421980-715cb0215aed?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "An elegant outdoor wedding setup at golden hour",
+            href: "/destination-weddings",
+          },
+          {
+            id: uid("tile"),
+            title: "Anniversary trips",
+            body: "Built for couples who already know what they like. Less back-and-forth, more confidence.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1471919743851-c4df8b6ee133?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "Two glasses on a sunset terrace",
+            href: "/anniversary-trips",
+          },
+          {
+            id: uid("tile"),
+            title: "Solo travel",
+            body: "Designed for one — solo-friendly hotels, door-to-door transfers, optional structure.",
+            imageUrl:
+              "https://images.unsplash.com/photo-1488646953014-85cb44e25828?auto=format&fit=crop&w=1200&q=80",
+            imageAlt: "A traveler with a journal in a quiet morning",
+            href: "/solo-travel",
+          },
         ],
       },
       {

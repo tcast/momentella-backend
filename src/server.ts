@@ -5,6 +5,7 @@ import rawBody from "fastify-raw-body";
 import { fromNodeHeaders } from "better-auth/node";
 import { auth } from "./lib/auth.js";
 import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
+import { seedNicheForms } from "./lib/seed-niche-forms.js";
 import { seedPlaces } from "./lib/seed-places.js";
 import { seedProducts } from "./lib/seed-products.js";
 import { seedSiteNav } from "./lib/seed-site-nav.js";
@@ -138,6 +139,14 @@ void seedSiteNav()
   })
   .catch((err) => {
     app.log.warn({ err }, "site nav seed failed");
+  });
+
+void seedNicheForms()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded niche forms");
+  })
+  .catch((err) => {
+    app.log.warn({ err }, "niche forms seed failed");
   });
 
 void seedMarketingPages()
