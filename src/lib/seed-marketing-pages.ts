@@ -6,6 +6,7 @@ import {
   defaultTripBookingPageSchema,
   type PageSchema,
 } from "./page-schema.js";
+import { NICHE_PAGES, nichePageSchema } from "./niche-pages.js";
 
 /**
  * Ensure the editable `home` + `connect` pages exist and each have at least
@@ -91,6 +92,17 @@ export async function seedMarketingPages(): Promise<{
     "The /gift-certificates marketing page — promotes itinerary planning as a gift (Mother's Day-aware copy by default)",
     () => defaultGiftCertificatesPageSchema(),
   );
+
+  // Niche / SEO landing pages — one per travel sub-segment we serve.
+  // Each is editable via the page builder; we just seed initial copy.
+  for (const niche of NICHE_PAGES) {
+    await ensure(
+      niche.slug,
+      niche.name,
+      niche.description,
+      () => nichePageSchema(niche),
+    );
+  }
 
   return stats;
 }
