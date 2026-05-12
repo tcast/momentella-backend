@@ -1,11 +1,19 @@
 /**
- * High-level orchestration for generating one social post draft from a
- * brief. Composes the brand-voice system prompt + platform conventions +
- * campaign template + admin-supplied brief, calls OpenAI in JSON mode,
- * and validates the response into a flat shape the DB can store.
+ * High-level orchestration for generating one (or many) social post drafts
+ * from a brief. Composes the brand-voice system prompt + platform
+ * conventions + campaign template + admin-supplied brief, dispatches to
+ * the requested AI provider (or "auto"), and normalizes the response into
+ * a flat shape the DB can store.
  */
 
-import { completeJson } from "./openai.js";
+import {
+  AIProviderError,
+  completeJson,
+  configuredTextProviders,
+  pickTextProvider,
+  providerLabel,
+  type TextProviderName,
+} from "./ai-providers.js";
 import {
   BRAND_VOICE_PROMPT,
   campaignByKey,
@@ -24,8 +32,6 @@ export interface GenerateBrief {
   briefing?: string | null;
   tone?: string | null;
   goal?: string | null;
-  /** If true, suggest a CTA href automatically. */
-  autoCta?: boolean;
 }
 
 export interface ScriptScene {
@@ -50,6 +56,65 @@ export interface GeneratedDraft {
   ctaHref: string | null;
   imagePrompt: string;
 }
+
+export interface GeneratedDraftWithProvider {
+  draft: GeneratedDraft;
+  provider: TextProviderName;
+  providerLabel: string;
+  model: string;
+}
+
+export interface CompareResultRow {
+  provider: TextProviderName;
+  providerLabel: string;
+  model: string;
+  draft: GeneratedDraft | null;
+  error: string | null;
+}
+
+const POST_SCHEMA: Record<string, unknown> = {
+  type: "object",
+  properties: {
+    caption: { type: "string" },
+    hashtags: { type: "array", items: { type: "string" } },
+    hook: { type: "string" },
+    script: {
+      type: "object",
+      properties: {
+        hook: { type: "string" },
+        audioVibe: { type: "string" },
+        scenes: {
+          type: "array",
+          items: {
+            type: "object",
+            properties: {
+              visual: { type: "string" },
+              textOverlay: { type: "string" },
+              voiceover: { type: "string" },
+              durationSec: { type: "number" },
+            },
+            required: ["visual"],
+          },
+        },
+      },
+    },
+    cta: { type: "string" },
+    ctaHref: { type: "string" },
+    imagePrompt: { type: "string" },
+  },
+  required: ["caption", "hashtags", "cta", "imagePrompt"],
+};
+
+const SCHEMA_DESCRIPTION = `Return JSON matching this shape:
+{
+  caption: string (ready-to-paste caption in Momentella voice),
+  hashtags: string[] (each starts with '#', lowercase, no spaces),
+  hook: string | null (only for reels/tiktoks — first 3 seconds),
+  script: { hook: string, audioVibe: string, scenes: Array<{ visual: string, textOverlay: string, voiceover: string, durationSec: number }> } | null (null for static/story/facebook_post),
+  cta: string (one short CTA line),
+  ctaHref: string | null (pathname on momentella.com or null),
+  imagePrompt: string (vivid, brand-on prompt — calm editorial scene, natural light, no text in image)
+}`;
 
 function buildUserPrompt(brief: GenerateBrief): string {
   const tmpl = campaignByKey(brief.campaignKey);
@@ -78,26 +143,10 @@ function buildUserPrompt(brief: GenerateBrief): string {
     lines.push("Admin notes / extras (treat as ground truth):");
     lines.push(brief.briefing);
   }
-
   lines.push("");
-  lines.push("Return JSON exactly matching this TypeScript type — no markdown, no commentary outside the JSON:");
-  lines.push("```");
-  lines.push("{");
-  lines.push("  caption: string;             // ready-to-paste caption in Momentella voice");
-  lines.push("  hashtags: string[];          // each starts with '#', lowercase, no spaces");
-  lines.push("  hook: string | null;         // only for reels/tiktoks — first 3 seconds");
-  lines.push("  script: {");
-  lines.push("    hook: string;");
-  lines.push("    audioVibe: string;");
-  lines.push("    scenes: Array<{ visual: string; textOverlay: string; voiceover: string; durationSec: number }>;");
-  lines.push("  } | null;                    // null for static / story / facebook_post");
-  lines.push("  cta: string;                 // one short CTA line");
-  lines.push("  ctaHref: string | null;      // pathname on momentella.com or null");
-  lines.push("  imagePrompt: string;         // a vivid, brand-on prompt to generate an image for this post");
-  lines.push("}");
-  lines.push("```");
-  lines.push("");
-  lines.push("Critical: imagePrompt must describe a single, calm, editorial scene with natural light, real-feeling — not stock-y, no banners, no text in the image.");
+  lines.push(
+    "Critical: imagePrompt must describe a single, calm, editorial scene with natural light, real-feeling — not stock-y, no banners, no text in the image.",
+  );
   return lines.join("\n");
 }
 
@@ -142,17 +191,7 @@ function parseScript(v: unknown): VideoScript | null {
   };
 }
 
-/** Generate one social-post draft from a brief. Throws on API errors. */
-export async function generateSocialDraft(
-  brief: GenerateBrief,
-): Promise<GeneratedDraft> {
-  const user = buildUserPrompt(brief);
-  const raw = await completeJson<Record<string, unknown>>({
-    system: BRAND_VOICE_PROMPT,
-    user,
-    // Slightly above default for stronger voice but not chaotic.
-    temperature: 0.75,
-  });
+function normalize(raw: Record<string, unknown>, brief: GenerateBrief): GeneratedDraft {
   const caption = asString(raw.caption).trim();
   const cta = asString(raw.cta).trim();
   const imagePrompt = asString(raw.imagePrompt).trim();
@@ -177,4 +216,96 @@ export async function generateSocialDraft(
       imagePrompt ||
       `Editorial, natural-light photograph in the Momentella style. ${brief.destination ?? "Travel scene"}. Calm composition, warm palette, no text.`,
   };
+}
+
+/**
+ * Resolve "auto"/explicit provider to a concrete `TextProviderName`. Throws
+ * if the requested provider isn't configured and no fallback exists.
+ */
+export function resolveProvider(
+  requested: TextProviderName | "auto" | null | undefined,
+  brief: GenerateBrief,
+): TextProviderName {
+  if (requested && requested !== "auto") {
+    const available = configuredTextProviders();
+    if (available.includes(requested)) return requested;
+    // requested provider missing — fall back if possible
+    const fallback = pickTextProvider({ contentType: brief.contentType });
+    if (!fallback) {
+      throw new Error(
+        `${providerLabel(requested)} isn't configured and no other AI provider is available either.`,
+      );
+    }
+    return fallback;
+  }
+  const auto = pickTextProvider({ contentType: brief.contentType });
+  if (!auto) {
+    throw new Error(
+      "No AI provider is configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY.",
+    );
+  }
+  return auto;
+}
+
+/** Generate one social-post draft using the specified provider. */
+export async function generateSocialDraft(
+  brief: GenerateBrief,
+  provider: TextProviderName,
+): Promise<GeneratedDraftWithProvider> {
+  const user = buildUserPrompt(brief);
+  const out = await completeJson<Record<string, unknown>>(provider, {
+    system: BRAND_VOICE_PROMPT,
+    user,
+    schemaDescription: SCHEMA_DESCRIPTION,
+    schema: POST_SCHEMA,
+    temperature: 0.75,
+  });
+  return {
+    draft: normalize(out.data, brief),
+    provider: out.provider,
+    providerLabel: out.providerLabel,
+    model: out.model,
+  };
+}
+
+/**
+ * Fan the same brief out to every configured text provider in parallel
+ * and return a row per provider (some may have errors). Used by the
+ * "Compare all 3" wizard mode.
+ */
+export async function generateSocialDraftsCompare(
+  brief: GenerateBrief,
+): Promise<CompareResultRow[]> {
+  const providers = configuredTextProviders();
+  if (providers.length === 0) {
+    throw new Error("No AI provider is configured.");
+  }
+  const rows = await Promise.all(
+    providers.map(async (p): Promise<CompareResultRow> => {
+      try {
+        const r = await generateSocialDraft(brief, p);
+        return {
+          provider: r.provider,
+          providerLabel: r.providerLabel,
+          model: r.model,
+          draft: r.draft,
+          error: null,
+        };
+      } catch (err) {
+        const msg = err instanceof AIProviderError
+          ? `${err.status}: ${err.bodyText.slice(0, 120)}`
+          : err instanceof Error
+            ? err.message
+            : "Generation failed";
+        return {
+          provider: p,
+          providerLabel: providerLabel(p),
+          model: "",
+          draft: null,
+          error: msg,
+        };
+      }
+    }),
+  );
+  return rows;
 }

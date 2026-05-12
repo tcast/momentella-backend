@@ -24,10 +24,15 @@ import {
   putObject,
 } from "../lib/object-storage.js";
 import {
-  OpenAINotConfigured,
+  AIProviderError,
+  configuredImageProviders,
+  configuredTextProviders,
   generateImage,
-  isOpenAIConfigured,
-} from "../lib/openai.js";
+  imageProviderInfo,
+  textProviderInfo,
+  type ImageProviderName,
+  type TextProviderName,
+} from "../lib/ai-providers.js";
 import {
   CAMPAIGN_TEMPLATES,
   PLATFORMS,
@@ -37,6 +42,8 @@ import {
 } from "../lib/social-brand.js";
 import {
   generateSocialDraft,
+  generateSocialDraftsCompare,
+  resolveProvider,
   type GenerateBrief,
 } from "../lib/social-generate.js";
 
@@ -85,16 +92,23 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
     }
   });
 
-  // ─── Campaign templates ──────────────────────────────────────────────
+  // ─── Campaign templates + provider config ────────────────────────────
   app.get("/campaigns", async () => {
+    const textConfigured = configuredTextProviders();
+    const imageConfigured = configuredImageProviders();
     return {
       campaigns: CAMPAIGN_TEMPLATES,
       platforms: PLATFORMS.map((p) => ({
         value: p,
         contentType: defaultContentType(p),
       })),
-      openaiConfigured: isOpenAIConfigured(),
-      imageGenConfigured: isOpenAIConfigured() && isObjectStorageConfigured(),
+      textProviders: textProviderInfo(),
+      imageProviders: imageProviderInfo(),
+      // Convenience flags for the UI.
+      textConfigured: textConfigured.length > 0,
+      imageGenConfigured: imageConfigured.length > 0 && isObjectStorageConfigured(),
+      // Backward-compat flag still used in older UI builds.
+      openaiConfigured: textConfigured.includes("openai"),
     };
   });
 
@@ -153,10 +167,11 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
 
   // ─── Generate (no DB write) ──────────────────────────────────────────
   app.post("/generate", async (request, reply) => {
-    if (!isOpenAIConfigured()) {
-      return reply
-        .status(503)
-        .send({ error: "OpenAI is not configured. Set OPENAI_API_KEY on the API service." });
+    if (configuredTextProviders().length === 0) {
+      return reply.status(503).send({
+        error:
+          "No AI provider is configured. Set OPENAI_API_KEY, ANTHROPIC_API_KEY, or GEMINI_API_KEY on the API service.",
+      });
     }
     const body = safeBody(request);
     if (!isPlatform(body.platform)) {
@@ -174,17 +189,32 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
       tone: strOrNull(body.tone),
       goal: strOrNull(body.goal),
     };
+
+    // Provider can be: "auto" | "openai" | "anthropic" | "gemini" | "compare"
+    const rawProvider = strOrNull(body.provider) ?? "auto";
+
     try {
-      const draft = await generateSocialDraft(brief);
-      return { draft, brief };
-    } catch (err) {
-      if (err instanceof OpenAINotConfigured) {
-        return reply.status(503).send({ error: err.message });
+      if (rawProvider === "compare") {
+        const drafts = await generateSocialDraftsCompare(brief);
+        return { compareDrafts: drafts, brief };
       }
+      const provider = resolveProvider(
+        rawProvider as TextProviderName | "auto",
+        brief,
+      );
+      const out = await generateSocialDraft(brief, provider);
+      return {
+        draft: out.draft,
+        brief,
+        provider: out.provider,
+        providerLabel: out.providerLabel,
+        model: out.model,
+      };
+    } catch (err) {
       app.log.error({ err }, "social generate failed");
-      const msg =
-        err instanceof Error ? err.message : "Generation failed";
-      return reply.status(502).send({ error: msg });
+      const msg = err instanceof Error ? err.message : "Generation failed";
+      const status = err instanceof AIProviderError ? 502 : 502;
+      return reply.status(status).send({ error: msg });
     }
   });
 
@@ -376,14 +406,15 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
     return reply.status(201).send({ image });
   });
 
-  // ─── Generate an image with OpenAI and attach it ─────────────────────
+  // ─── Generate an image with OpenAI / Gemini and attach it ───────────
   app.post<{ Params: { id: string } }>(
     "/:id/images/generate",
     async (request, reply) => {
-      if (!isOpenAIConfigured()) {
-        return reply
-          .status(503)
-          .send({ error: "OpenAI is not configured. Set OPENAI_API_KEY." });
+      if (configuredImageProviders().length === 0) {
+        return reply.status(503).send({
+          error:
+            "No image generator is configured. Set OPENAI_API_KEY (recommended) or GEMINI_API_KEY.",
+        });
       }
       if (!isObjectStorageConfigured()) {
         return reply
@@ -399,11 +430,16 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
       const prompt = strOrNull(body.prompt);
       if (!prompt) return reply.status(400).send({ error: "prompt required" });
       const size = imageSizeFor(post.platform as Platform);
+      const providerReq = strOrNull(body.provider) ?? "auto";
+      const provider: ImageProviderName | "auto" =
+        providerReq === "openai" || providerReq === "gemini"
+          ? (providerReq as ImageProviderName)
+          : "auto";
       try {
-        const out = await generateImage({ prompt, size });
+        const out = await generateImage({ prompt, size, provider });
         const stored = await putObject({
           body: out.bytes,
-          filename: "ai.png",
+          filename: out.contentType.includes("png") ? "ai.png" : "ai.jpg",
           contentType: out.contentType,
           prefix: "social/ai",
         });
@@ -417,15 +453,16 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
             alt: strOrNull(body.alt),
             slideCaption: strOrNull(body.slideCaption),
             source: "ai_generated",
-            prompt,
+            prompt: `[${out.provider}/${out.model}] ${prompt}`,
             position: existing,
           },
         });
-        return reply.status(201).send({ image });
+        return reply.status(201).send({
+          image,
+          provider: out.provider,
+          model: out.model,
+        });
       } catch (err) {
-        if (err instanceof OpenAINotConfigured) {
-          return reply.status(503).send({ error: err.message });
-        }
         if (err instanceof ObjectStorageNotConfigured) {
           return reply.status(503).send({ error: err.message });
         }
