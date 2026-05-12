@@ -73,17 +73,22 @@ function modelOpenAI(): string {
   return process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-5.5";
 }
 function modelAnthropic(): string {
-  // Claude Sonnet 4.6 (released 2026-02-17): strong editorial writing,
-  // structured-outputs support, much cheaper than Opus. Override via env
-  // (e.g. `claude-opus-4-7` for top quality, `claude-haiku-4-5-20251001`
-  // for cheapest/fastest).
-  return process.env.ANTHROPIC_TEXT_MODEL?.trim() || "claude-sonnet-4-6";
+  // Claude Opus 4.7 (released 2026-04-14): Anthropic's current top model.
+  // Strongest editorial writing of any provider. Override via env
+  // (e.g. `claude-sonnet-4-6` for ~5x cheaper drafts that are still great).
+  return process.env.ANTHROPIC_TEXT_MODEL?.trim() || "claude-opus-4-7";
 }
 function modelGemini(): string {
-  return process.env.GEMINI_TEXT_MODEL?.trim() || "gemini-2.0-flash";
+  // Gemini 2.5 Pro: Google's writing-quality tier. Override via env
+  // (e.g. `gemini-2.5-flash` for faster/cheaper drafts).
+  return process.env.GEMINI_TEXT_MODEL?.trim() || "gemini-2.5-pro";
 }
 function modelGeminiImage(): string {
-  return process.env.GEMINI_IMAGE_MODEL?.trim() || "imagen-3.0-generate-002";
+  // "Nano Banana" — Google's :generateContent image model. Far better
+  // than the older Imagen models and uses the same endpoint as text gen.
+  // Override to `gemini-3-pro-image-preview` ("Nano Banana Pro") for
+  // top quality if its availability has stabilized.
+  return process.env.GEMINI_IMAGE_MODEL?.trim() || "gemini-2.5-flash-image";
 }
 
 function keyOpenAI(): string | null {
@@ -459,15 +464,23 @@ async function generateImageGemini(
   const key = keyGemini();
   if (!key) throw new Error("Gemini is not configured.");
   const model = modelGeminiImage();
-  // Imagen aspect ratios: "1:1" | "3:4" | "4:3" | "9:16" | "16:9"
-  const aspectRatio =
-    size === "1024x1024" ? "1:1" : size === "1024x1792" ? "9:16" : "16:9";
+  // "Nano Banana" models accept aspect ratio as a natural-language hint
+  // in the prompt — they don't have a dedicated parameter for it. We
+  // weave the platform aspect into the prompt itself.
+  const aspectHint =
+    size === "1024x1024"
+      ? "Square 1:1 composition."
+      : size === "1024x1792"
+        ? "Vertical 9:16 composition — composed for Instagram reels / TikTok."
+        : "Landscape 16:9 composition.";
   const body = {
-    instances: [{ prompt }],
-    parameters: {
-      sampleCount: 1,
-      aspectRatio,
-      personGeneration: "allow_adult",
+    contents: [
+      {
+        parts: [{ text: `${prompt}\n\n${aspectHint}` }],
+      },
+    ],
+    generationConfig: {
+      responseModalities: ["IMAGE"],
     },
   };
   const controller = new AbortController();
@@ -475,7 +488,7 @@ async function generateImageGemini(
   let res: Response;
   try {
     res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:predict?key=${encodeURIComponent(key)}`,
+      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
       {
         method: "POST",
         headers: { "content-type": "application/json" },
@@ -488,31 +501,37 @@ async function generateImageGemini(
   }
   const text = await res.text();
   if (!res.ok) throw new AIProviderError("gemini", res.status, text);
-  type ImagenResp = {
-    predictions?: Array<{
-      bytesBase64Encoded?: string;
-      mimeType?: string;
+  type NanoBananaResp = {
+    candidates?: Array<{
+      content?: {
+        parts?: Array<{
+          inlineData?: { mimeType?: string; data?: string };
+        }>;
+      };
     }>;
   };
-  let parsed: ImagenResp;
+  let parsed: NanoBananaResp;
   try {
-    parsed = JSON.parse(text) as ImagenResp;
+    parsed = JSON.parse(text) as NanoBananaResp;
   } catch {
     throw new AIProviderError("gemini", res.status, `bad outer JSON: ${text.slice(0, 200)}`);
   }
-  const first = parsed.predictions?.[0];
-  if (!first?.bytesBase64Encoded) {
-    throw new AIProviderError(
-      "gemini",
-      res.status,
-      `no image bytes in response: ${text.slice(0, 200)}`,
-    );
+  for (const cand of parsed.candidates ?? []) {
+    for (const p of cand.content?.parts ?? []) {
+      if (p.inlineData?.data) {
+        return {
+          bytes: Buffer.from(p.inlineData.data, "base64"),
+          contentType: p.inlineData.mimeType || "image/png",
+          size,
+          provider: "gemini",
+          model,
+        };
+      }
+    }
   }
-  return {
-    bytes: Buffer.from(first.bytesBase64Encoded, "base64"),
-    contentType: first.mimeType || "image/png",
-    size,
-    provider: "gemini",
-    model,
-  };
+  throw new AIProviderError(
+    "gemini",
+    res.status,
+    `no image bytes in response: ${text.slice(0, 200)}`,
+  );
 }
