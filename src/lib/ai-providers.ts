@@ -70,7 +70,11 @@ function modelOpenAI(): string {
   return process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-4o-mini";
 }
 function modelAnthropic(): string {
-  return process.env.ANTHROPIC_TEXT_MODEL?.trim() || "claude-3-5-sonnet-latest";
+  // Claude Sonnet 4.6 (released 2026-02-17): strong editorial writing,
+  // structured-outputs support, much cheaper than Opus. Override via env
+  // (e.g. `claude-opus-4-7` for top quality, `claude-haiku-4-5-20251001`
+  // for cheapest/fastest).
+  return process.env.ANTHROPIC_TEXT_MODEL?.trim() || "claude-sonnet-4-6";
 }
 function modelGemini(): string {
   return process.env.GEMINI_TEXT_MODEL?.trim() || "gemini-2.0-flash";
