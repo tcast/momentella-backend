@@ -548,6 +548,12 @@ model SocialPost {
   /// Where it was actually posted (URL admin pastes after manual publish).
   postedUrl    String?
 
+  /// AI-generated avatar/video (HeyGen). JSON shape:
+  /// { provider, jobId, status: "pending"|"processing"|"ready"|"failed",
+  ///   videoUrl?, thumbnailUrl?, avatarId, voiceId, durationSec?, errorMessage?,
+  ///   submittedAt, readyAt? }
+  aiVideo      Json?
+
   /// Audit.
   createdById  String
   createdBy    User     @relation(fields: [createdById], references: [id], onDelete: Cascade)

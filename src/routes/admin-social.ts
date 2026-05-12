@@ -16,6 +16,7 @@
  */
 
 import type { FastifyPluginAsync, FastifyRequest } from "fastify";
+import { Prisma } from "@prisma/client";
 import { prisma } from "../lib/prisma.js";
 import { getSession } from "../lib/request-session.js";
 import {
@@ -33,6 +34,18 @@ import {
   type ImageProviderName,
   type TextProviderName,
 } from "../lib/ai-providers.js";
+import {
+  estimateAudioDurationSec,
+  generateVoiceover,
+  isElevenLabsConfigured,
+} from "../lib/ai-voice.js";
+import {
+  aspectForPlatform,
+  getHeyGenStatus,
+  isHeyGenConfigured,
+  scriptToVoiceoverText,
+  submitHeyGenVideo,
+} from "../lib/ai-video.js";
 import {
   CAMPAIGN_TEMPLATES,
   PLATFORMS,
@@ -107,6 +120,8 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
       // Convenience flags for the UI.
       textConfigured: textConfigured.length > 0,
       imageGenConfigured: imageConfigured.length > 0 && isObjectStorageConfigured(),
+      voiceoverConfigured: isElevenLabsConfigured() && isObjectStorageConfigured(),
+      aiVideoConfigured: isHeyGenConfigured() && isObjectStorageConfigured(),
       // Backward-compat flag still used in older UI builds.
       openaiConfigured: textConfigured.includes("openai"),
     };
@@ -506,6 +521,282 @@ export const adminSocialRoutes: FastifyPluginAsync = async (app) => {
           where: { id: request.params.imageId },
         });
         return reply.status(204).send();
+      } catch {
+        return reply.status(404).send({ error: "Not found" });
+      }
+    },
+  );
+
+  // ─── Per-scene voiceover (ElevenLabs) ────────────────────────────────
+  app.post<{ Params: { id: string; sceneIndex: string } }>(
+    "/:id/scenes/:sceneIndex/voiceover",
+    async (request, reply) => {
+      if (!isElevenLabsConfigured()) {
+        return reply.status(503).send({
+          error: "ElevenLabs is not configured. Set ELEVENLABS_API_KEY.",
+        });
+      }
+      if (!isObjectStorageConfigured()) {
+        return reply
+          .status(503)
+          .send({ error: "Object storage is not configured for audio hosting." });
+      }
+      const post = await prisma.socialPost.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!post) return reply.status(404).send({ error: "Not found" });
+      const idx = Number(request.params.sceneIndex);
+      if (!Number.isFinite(idx) || idx < 0) {
+        return reply.status(400).send({ error: "Invalid scene index" });
+      }
+
+      const script = post.script as Record<string, unknown> | null;
+      const scenes = Array.isArray(script?.scenes) ? script.scenes : null;
+      if (!scenes || !scenes[idx] || typeof scenes[idx] !== "object") {
+        return reply.status(400).send({ error: "Scene does not exist" });
+      }
+      const scene = scenes[idx] as Record<string, unknown>;
+      const body = safeBody(request);
+      const text =
+        strOrNull(body.text) ??
+        (typeof scene.voiceover === "string" ? scene.voiceover.trim() : "");
+      if (!text) {
+        return reply
+          .status(400)
+          .send({ error: "Scene has no voiceover text." });
+      }
+      const voiceId = strOrNull(body.voiceId);
+      try {
+        const out = await generateVoiceover({
+          text,
+          voiceId: voiceId ?? undefined,
+        });
+        const stored = await putObject({
+          body: out.bytes,
+          filename: "voiceover.mp3",
+          contentType: out.contentType,
+          prefix: "social/voiceover",
+        });
+        // Splice the audio metadata back into the scene JSON.
+        const dur = estimateAudioDurationSec(out.bytes.length);
+        const newScenes = scenes.slice();
+        newScenes[idx] = {
+          ...scene,
+          audioUrl: stored.url,
+          audioDurationSec: dur,
+          audioVoiceId: out.voiceId,
+          audioModel: out.modelId,
+          audioText: text,
+        };
+        const newScript = { ...(script ?? {}), scenes: newScenes };
+        const updated = await prisma.socialPost.update({
+          where: { id: post.id },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data: { script: newScript as any },
+          include: { images: { orderBy: { position: "asc" } } },
+        });
+        return { post: updated, audioUrl: stored.url };
+      } catch (err) {
+        app.log.error({ err }, "voiceover generate failed");
+        const msg =
+          err instanceof Error ? err.message : "Voiceover generation failed";
+        return reply.status(502).send({ error: msg });
+      }
+    },
+  );
+
+  // Remove a scene's voiceover (does not delete the R2 object).
+  app.delete<{ Params: { id: string; sceneIndex: string } }>(
+    "/:id/scenes/:sceneIndex/voiceover",
+    async (request, reply) => {
+      const post = await prisma.socialPost.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!post) return reply.status(404).send({ error: "Not found" });
+      const idx = Number(request.params.sceneIndex);
+      const script = post.script as Record<string, unknown> | null;
+      const scenes = Array.isArray(script?.scenes) ? script.scenes : null;
+      if (!scenes || !scenes[idx] || typeof scenes[idx] !== "object") {
+        return reply.status(400).send({ error: "Scene does not exist" });
+      }
+      const scene = scenes[idx] as Record<string, unknown>;
+      const cleaned: Record<string, unknown> = { ...scene };
+      delete cleaned.audioUrl;
+      delete cleaned.audioDurationSec;
+      delete cleaned.audioVoiceId;
+      delete cleaned.audioModel;
+      delete cleaned.audioText;
+      const newScenes = scenes.slice();
+      newScenes[idx] = cleaned;
+      const newScript = { ...(script ?? {}), scenes: newScenes };
+      const updated = await prisma.socialPost.update({
+        where: { id: post.id },
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        data: { script: newScript as any },
+        include: { images: { orderBy: { position: "asc" } } },
+      });
+      return { post: updated };
+    },
+  );
+
+  // ─── AI avatar video (HeyGen) ────────────────────────────────────────
+  app.post<{ Params: { id: string } }>(
+    "/:id/video/generate",
+    async (request, reply) => {
+      if (!isHeyGenConfigured()) {
+        return reply.status(503).send({
+          error: "HeyGen is not configured. Set HEYGEN_API_KEY.",
+        });
+      }
+      if (!isObjectStorageConfigured()) {
+        return reply
+          .status(503)
+          .send({ error: "Object storage is not configured for video hosting." });
+      }
+      const post = await prisma.socialPost.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!post) return reply.status(404).send({ error: "Not found" });
+      const body = safeBody(request);
+      const scriptText =
+        strOrNull(body.script) ?? scriptToVoiceoverText(post.script);
+      if (!scriptText) {
+        return reply
+          .status(400)
+          .send({ error: "No voiceover lines in this post's script." });
+      }
+      const aspect = aspectForPlatform(post.platform);
+      try {
+        const submitted = await submitHeyGenVideo({
+          script: scriptText,
+          aspect,
+          avatarId: strOrNull(body.avatarId) ?? undefined,
+          voiceId: strOrNull(body.voiceId) ?? undefined,
+        });
+        const aiVideo = {
+          provider: "heygen",
+          jobId: submitted.videoId,
+          status: "processing",
+          videoUrl: null,
+          thumbnailUrl: null,
+          avatarId: submitted.avatarId,
+          voiceId: submitted.voiceId,
+          durationSec: null,
+          errorMessage: null,
+          submittedAt: new Date().toISOString(),
+          readyAt: null,
+          script: scriptText,
+        };
+        const updated = await prisma.socialPost.update({
+          where: { id: post.id },
+          // eslint-disable-next-line @typescript-eslint/no-explicit-any
+          data: { aiVideo: aiVideo as any },
+          include: { images: { orderBy: { position: "asc" } } },
+        });
+        return { post: updated };
+      } catch (err) {
+        app.log.error({ err }, "heygen submit failed");
+        const msg = err instanceof Error ? err.message : "HeyGen submit failed";
+        return reply.status(502).send({ error: msg });
+      }
+    },
+  );
+
+  // Poll HeyGen for status. If completed, mirror the video into R2 and
+  // record the final URL so the player loads from our domain (and we
+  // aren't dependent on HeyGen's CDN URLs which expire).
+  app.get<{ Params: { id: string } }>(
+    "/:id/video/status",
+    async (request, reply) => {
+      const post = await prisma.socialPost.findUnique({
+        where: { id: request.params.id },
+      });
+      if (!post) return reply.status(404).send({ error: "Not found" });
+      const current = (post.aiVideo as Record<string, unknown> | null) ?? null;
+      const jobId = current?.jobId;
+      if (!jobId || typeof jobId !== "string") {
+        return reply.status(400).send({ error: "No video job to poll." });
+      }
+      // Already done — just echo what we have.
+      if (current?.status === "ready" || current?.status === "failed") {
+        return { aiVideo: current };
+      }
+      try {
+        const s = await getHeyGenStatus(jobId);
+        if (s.status === "completed" && s.videoUrl) {
+          // Mirror to R2 so it survives HeyGen's URL expiration.
+          let mirroredUrl = s.videoUrl;
+          try {
+            const r = await fetch(s.videoUrl);
+            if (r.ok) {
+              const buf = Buffer.from(await r.arrayBuffer());
+              const stored = await putObject({
+                body: buf,
+                filename: "heygen.mp4",
+                contentType: r.headers.get("content-type") || "video/mp4",
+                prefix: "social/video",
+              });
+              mirroredUrl = stored.url;
+            }
+          } catch (err) {
+            app.log.warn({ err }, "heygen mirror failed; falling back to remote URL");
+          }
+          const aiVideo = {
+            ...current,
+            status: "ready",
+            videoUrl: mirroredUrl,
+            thumbnailUrl: s.thumbnailUrl,
+            durationSec: s.durationSec,
+            readyAt: new Date().toISOString(),
+          };
+          const updated = await prisma.socialPost.update({
+            where: { id: post.id },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            data: { aiVideo: aiVideo as any },
+          });
+          return { aiVideo: updated.aiVideo };
+        }
+        if (s.status === "failed") {
+          const aiVideo = {
+            ...current,
+            status: "failed",
+            errorMessage: s.errorMessage,
+            readyAt: new Date().toISOString(),
+          };
+          const updated = await prisma.socialPost.update({
+            where: { id: post.id },
+            // eslint-disable-next-line @typescript-eslint/no-explicit-any
+            data: { aiVideo: aiVideo as any },
+          });
+          return { aiVideo: updated.aiVideo };
+        }
+        // Still pending / processing — leave DB alone.
+        return {
+          aiVideo: {
+            ...current,
+            status: s.status === "pending" ? "pending" : "processing",
+          },
+        };
+      } catch (err) {
+        app.log.error({ err }, "heygen status check failed");
+        const msg =
+          err instanceof Error ? err.message : "HeyGen status check failed";
+        return reply.status(502).send({ error: msg });
+      }
+    },
+  );
+
+  // Clear the AI video state from a post (does not delete the R2 object).
+  app.delete<{ Params: { id: string } }>(
+    "/:id/video",
+    async (request, reply) => {
+      try {
+        const updated = await prisma.socialPost.update({
+          where: { id: request.params.id },
+          data: { aiVideo: Prisma.DbNull },
+          include: { images: { orderBy: { position: "asc" } } },
+        });
+        return { post: updated };
       } catch {
         return reply.status(404).send({ error: "Not found" });
       }
