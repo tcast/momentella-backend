@@ -67,7 +67,10 @@ export interface CompleteJsonResult<T = unknown> {
 // ─── Configuration helpers ──────────────────────────────────────────────
 
 function modelOpenAI(): string {
-  return process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-4o-mini";
+  // GPT-5.5 (released 2026-04-23): current top chat-tier model on the
+  // Responses API. Override via OPENAI_TEXT_MODEL — gpt-5.4-mini is the
+  // cheapest current mini model for high-volume drafts.
+  return process.env.OPENAI_TEXT_MODEL?.trim() || "gpt-5.5";
 }
 function modelAnthropic(): string {
   // Claude Sonnet 4.6 (released 2026-02-17): strong editorial writing,
