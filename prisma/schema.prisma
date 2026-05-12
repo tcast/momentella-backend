@@ -29,6 +29,7 @@ model User {
   ordersBought      Order[]            @relation("OrderBuyer")
   giftsRedeemed     GiftCertificate[]  @relation("GiftRedeemer")
   analyticsEvents   AnalyticsEvent[]
+  socialPosts       SocialPost[]
 
   @@unique([email])
   @@map("user")
@@ -509,6 +510,78 @@ model SiteNavConfig {
   updatedAt DateTime @updatedAt
 
   @@map("site_nav_config")
+}
+
+/// AI-assisted social media post generator. One row = one piece of
+/// planned content. The generator produces a draft from a brief +
+/// brand-voice system prompt; admins refine inline, then mark ready or
+/// schedule. No auto-publishing yet — admins copy/paste to Meta / TikTok.
+model SocialPost {
+  id          String  @id @default(cuid())
+
+  /// "instagram_post" | "instagram_reel" | "instagram_story"
+  /// "facebook_post" | "tiktok"
+  platform    String
+  /// "static" | "carousel" | "video" | "story"
+  contentType String
+
+  /// Inputs that produced the generated draft.
+  campaignKey String? // e.g. "mothers_day_gift" — from predefined templates
+  theme       String?
+  destination String?
+  briefing    String? // freeform admin notes / extras
+  tone        String? // "playful" | "elegant" | "urgent" | "evergreen" etc.
+  goal        String? // "awareness" | "intake_form" | "gift_purchase" etc.
+
+  /// Generated content (all editable).
+  caption     String  @db.Text
+  hashtags    String[] @default([])
+  hook        String? // 3-second hook for reels/TikToks
+  script      Json?   // scene-by-scene script for video content
+  cta         String? // suggested call-to-action line
+  ctaHref     String? // suggested deep link, e.g. /honeymoons
+
+  /// Lifecycle.
+  status       String   @default("draft") // draft | ready | scheduled | posted | archived
+  scheduledFor DateTime?
+  postedAt     DateTime?
+  /// Where it was actually posted (URL admin pastes after manual publish).
+  postedUrl    String?
+
+  /// Audit.
+  createdById  String
+  createdBy    User     @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  images       SocialPostImage[]
+
+  @@index([status])
+  @@index([platform])
+  @@index([createdAt])
+  @@map("social_post")
+}
+
+model SocialPostImage {
+  id        String     @id @default(cuid())
+  postId    String
+  post      SocialPost @relation(fields: [postId], references: [id], onDelete: Cascade)
+
+  url       String
+  alt       String?
+  /// Per-slide caption for carousels.
+  slideCaption String?
+  /// Ordering within the post (0-indexed).
+  position  Int        @default(0)
+  /// "uploaded" | "ai_generated" | "url"
+  source    String     @default("uploaded")
+  /// If AI-generated, the prompt used (so admins can regenerate variations).
+  prompt    String?
+
+  createdAt DateTime   @default(now())
+
+  @@index([postId])
+  @@map("social_post_image")
 }
 
 /// Anonymous analytics events. One row per pageview ping.
