@@ -218,9 +218,13 @@ export async function completeJson<T = unknown>(
   if (provider === "openai") {
     if (!keyOpenAI()) throw new Error("OpenAI is not configured.");
     try {
+      // OpenAI's JSON mode requires the literal word "JSON" to appear in the
+      // request. The schema description always contains it, so we just
+      // concatenate it onto the user prompt — same shape Anthropic + Gemini
+      // are already getting.
       const data = await openaiCompleteJson<T>({
         system: args.system,
-        user: args.user,
+        user: `${args.user}\n\n${args.schemaDescription}`,
         temperature: args.temperature,
         timeoutMs: args.timeoutMs,
       });
