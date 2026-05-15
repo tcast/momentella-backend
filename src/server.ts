@@ -11,6 +11,7 @@ import { seedProducts } from "./lib/seed-products.js";
 import { seedSiteNav } from "./lib/seed-site-nav.js";
 import { adminRoutes } from "./routes/admin.js";
 import { adminAnalyticsRoutes } from "./routes/admin-analytics.js";
+import { adminSavedBlocksRoutes } from "./routes/admin-saved-blocks.js";
 import { adminSocialRoutes } from "./routes/admin-social.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicCommerceRoutes } from "./routes/public-commerce.js";
@@ -111,6 +112,9 @@ export async function buildApp() {
   await app.register(adminRoutes, { prefix: "/api/admin" });
   await app.register(adminAnalyticsRoutes, { prefix: "/api/admin/analytics" });
   await app.register(adminSocialRoutes, { prefix: "/api/admin/social" });
+  await app.register(adminSavedBlocksRoutes, {
+    prefix: "/api/admin/saved-blocks",
+  });
   await app.register(publicIntakeRoutes, { prefix: "/api/public" });
   await app.register(publicCommerceRoutes, { prefix: "/api/public" });
   await app.register(webhookRoutes, { prefix: "/api/webhooks" });

@@ -30,6 +30,7 @@ model User {
   giftsRedeemed     GiftCertificate[]  @relation("GiftRedeemer")
   analyticsEvents   AnalyticsEvent[]
   socialPosts       SocialPost[]
+  savedBlocks       SavedBlock[]
 
   @@unique([email])
   @@map("user")
@@ -588,6 +589,36 @@ model SocialPostImage {
 
   @@index([postId])
   @@map("social_post_image")
+}
+
+/// Reusable content blocks — a snippet/template library for the page
+/// builder. Admins save a single page block (hero, feature_tiles,
+/// testimonial, etc.) as a named template; later, any page can insert a
+/// deep copy from the library. Inserted copies are independent — editing
+/// the saved template does NOT retroactively change pages where it was
+/// used. (Keeps the mental model simple: "save = template, insert = copy".)
+model SavedBlock {
+  id          String  @id @default(cuid())
+  name        String
+  description String?
+  /// Optional grouping label like "Hero", "CTA", "Testimonial".
+  category    String?
+  /// The block type, matching PageBlockType in code. Used for filtering
+  /// the library by what kind of block it is.
+  blockType   String
+  /// The full block JSON, ready to insert. Block.id inside is regenerated
+  /// at insert time so multiple copies don't collide on the same page.
+  block       Json
+
+  createdById String
+  createdBy   User    @relation(fields: [createdById], references: [id], onDelete: Cascade)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([blockType])
+  @@index([category])
+  @@index([updatedAt])
+  @@map("saved_block")
 }
 
 /// Anonymous analytics events. One row per pageview ping.
