@@ -239,6 +239,140 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     };
   });
 
+  // ─── Journal (public) ────────────────────────────────────────────────
+
+  /**
+   * Compact index of every published article — used by the SEO sitemap
+   * and by /llms-full.txt to discover the full list of public posts
+   * without paginating through the main /journal endpoint.
+   */
+  app.get("/journal/index", async () => {
+    const articles = await prisma.article.findMany({
+      where: { status: "published" },
+      select: {
+        slug: true,
+        title: true,
+        publishedAt: true,
+        updatedAt: true,
+      },
+      orderBy: [{ publishedAt: "desc" }],
+    });
+    return { articles };
+  });
+
+  /** Paginated public list of published articles (newest first). */
+  app.get("/journal", async (request) => {
+    const q = (request.query as Record<string, unknown>) ?? {};
+    const limit = Math.min(
+      50,
+      Math.max(1, Number(q.limit) || 24),
+    );
+    const offset = Math.max(0, Number(q.offset) || 0);
+    const category =
+      typeof q.category === "string" && q.category.trim()
+        ? q.category.trim()
+        : null;
+    const [articles, total] = await Promise.all([
+      prisma.article.findMany({
+        where: {
+          status: "published",
+          ...(category ? { category } : {}),
+        },
+        orderBy: [{ featured: "desc" }, { publishedAt: "desc" }],
+        take: limit,
+        skip: offset,
+        select: {
+          id: true,
+          slug: true,
+          title: true,
+          subtitle: true,
+          excerpt: true,
+          category: true,
+          tags: true,
+          heroImageUrl: true,
+          heroImageAlt: true,
+          featured: true,
+          publishedAt: true,
+          updatedAt: true,
+          author: {
+            select: { slug: true, name: true, avatarUrl: true, role: true },
+          },
+        },
+      }),
+      prisma.article.count({
+        where: {
+          status: "published",
+          ...(category ? { category } : {}),
+        },
+      }),
+    ]);
+    const categories = await prisma.article.findMany({
+      where: { status: "published", category: { not: null } },
+      distinct: ["category"],
+      select: { category: true },
+      orderBy: { category: "asc" },
+    });
+    return {
+      articles,
+      total,
+      limit,
+      offset,
+      categories: categories
+        .map((c) => c.category)
+        .filter((c): c is string => !!c),
+    };
+  });
+
+  /** Fetch a single published article by slug. 404 if unpublished. */
+  app.get<{ Params: { slug: string } }>(
+    "/journal/:slug",
+    async (request, reply) => {
+      const slug = request.params.slug;
+      if (!slugRe.test(slug)) {
+        return reply.status(400).send({ error: "Invalid slug" });
+      }
+      const article = await prisma.article.findFirst({
+        where: { slug, status: "published" },
+        include: {
+          author: {
+            select: {
+              slug: true,
+              name: true,
+              role: true,
+              bio: true,
+              avatarUrl: true,
+            },
+          },
+        },
+      });
+      if (!article) return reply.status(404).send({ error: "Article not found" });
+      const schema = parsePageSchema(article.body);
+      if (!schema) {
+        return reply.status(500).send({ error: "Invalid article body" });
+      }
+      // 3 most recent siblings (any category) for the "Keep reading" strip.
+      const related = await prisma.article.findMany({
+        where: {
+          status: "published",
+          NOT: { id: article.id },
+        },
+        orderBy: [{ publishedAt: "desc" }],
+        take: 3,
+        select: {
+          slug: true,
+          title: true,
+          excerpt: true,
+          heroImageUrl: true,
+          heroImageAlt: true,
+          category: true,
+          publishedAt: true,
+          author: { select: { name: true, avatarUrl: true } },
+        },
+      });
+      return { article: { ...article, body: schema }, related };
+    },
+  );
+
   app.get("/pages/:slug", async (request, reply) => {
     const slug = (request.params as { slug: string }).slug;
     if (!slugRe.test(slug)) {

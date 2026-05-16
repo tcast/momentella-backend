@@ -8,9 +8,11 @@ import { seedMarketingPages } from "./lib/seed-marketing-pages.js";
 import { seedNicheForms } from "./lib/seed-niche-forms.js";
 import { seedPlaces } from "./lib/seed-places.js";
 import { seedProducts } from "./lib/seed-products.js";
+import { seedDefaultAuthor } from "./lib/seed-author.js";
 import { seedSiteNav } from "./lib/seed-site-nav.js";
 import { adminRoutes } from "./routes/admin.js";
 import { adminAnalyticsRoutes } from "./routes/admin-analytics.js";
+import { adminJournalRoutes } from "./routes/admin-journal.js";
 import { adminSavedBlocksRoutes } from "./routes/admin-saved-blocks.js";
 import { adminSocialRoutes } from "./routes/admin-social.js";
 import { clientRoutes } from "./routes/client.js";
@@ -115,6 +117,8 @@ export async function buildApp() {
   await app.register(adminSavedBlocksRoutes, {
     prefix: "/api/admin/saved-blocks",
   });
+  // /api/admin/articles and /api/admin/authors share one plugin.
+  await app.register(adminJournalRoutes, { prefix: "/api/admin" });
   await app.register(publicIntakeRoutes, { prefix: "/api/public" });
   await app.register(publicCommerceRoutes, { prefix: "/api/public" });
   await app.register(webhookRoutes, { prefix: "/api/webhooks" });
@@ -145,6 +149,14 @@ void seedSiteNav()
   })
   .catch((err) => {
     app.log.warn({ err }, "site nav seed failed");
+  });
+
+void seedDefaultAuthor()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded default author");
+  })
+  .catch((err) => {
+    app.log.warn({ err }, "author seed failed");
   });
 
 void seedNicheForms()

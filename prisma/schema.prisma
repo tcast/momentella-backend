@@ -591,6 +591,86 @@ model SocialPostImage {
   @@map("social_post_image")
 }
 
+/// Journal authors — used as the byline on Article posts. Decoupled
+/// from the `User` table so we can keep author profiles (bio, avatar,
+/// role) editable without conflating them with login accounts. Most
+/// shops will only have one or two authors, so the model stays simple.
+model Author {
+  id        String   @id @default(cuid())
+  /// URL-safe identifier, used in /journal/by/<slug> if we ever ship
+  /// author pages. Unique.
+  slug      String   @unique
+  name      String
+  email     String?
+  /// e.g. "Founder & lead trip designer".
+  role      String?
+  /// Short bio (~280 chars). Drives both the public byline and the
+  /// `author.description` field in BlogPosting JSON-LD, which Google
+  /// uses for E-E-A-T scoring.
+  bio       String?
+  avatarUrl String?
+  active    Boolean  @default(true)
+
+  articles  Article[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("author")
+}
+
+/// Long-form journal articles. The body reuses the same PageBlock[]
+/// schema as marketing pages so admins author articles in the visual
+/// page builder they already know — and articles can use the same
+/// blocks (rich text, hero, FAQ, testimonial, images, etc.) for free.
+model Article {
+  id              String   @id @default(cuid())
+  /// URL slug, e.g. "honeymoon-planning-guide-2026". Unique.
+  slug            String   @unique
+  title           String
+  /// Optional supporting line under the title.
+  subtitle        String?
+  /// 1-2 sentences used for the card grid, meta description fallback,
+  /// and the snippet LLMs see in /llms-full.txt.
+  excerpt         String?
+  /// Optional category label like "Field notes" or "Guides".
+  category        String?
+  tags            String[] @default([])
+
+  heroImageUrl    String?
+  heroImageAlt    String?
+  /// Optional explicit OG image. If null, heroImageUrl is used.
+  ogImageUrl      String?
+
+  /// PageSchema-shaped body: `{ version, blocks: PageBlock[] }`. We
+  /// validate the same way as marketing pages.
+  body            Json
+
+  /// SEO overrides. If null, the article title / excerpt are used.
+  metaTitle       String?
+  metaDescription String?
+
+  /// "draft" | "published" | "archived". Drafts are not publicly
+  /// reachable; archived articles 404 on the public site but stay in
+  /// the admin list for reference.
+  status          String   @default("draft")
+  publishedAt     DateTime?
+  /// Pinned articles surface at the top of the /journal index.
+  featured        Boolean  @default(false)
+
+  authorId        String
+  author          Author   @relation(fields: [authorId], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([status])
+  @@index([publishedAt])
+  @@index([category])
+  @@index([featured])
+  @@map("article")
+}
+
 /// Reusable content blocks — a snippet/template library for the page
 /// builder. Admins save a single page block (hero, feature_tiles,
 /// testimonial, etc.) as a named template; later, any page can insert a
