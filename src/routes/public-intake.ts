@@ -206,6 +206,39 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     return { config: parsed ?? defaultSiteNavConfig() };
   });
 
+  /**
+   * Compact index of every published marketing page — used by the SEO
+   * sitemap to populate `<lastmod>` with each page's actual last-publish
+   * timestamp (the single biggest crawler signal for "is this URL still
+   * fresh and worth re-crawling?"). Public on purpose.
+   */
+  app.get("/pages/index", async () => {
+    const pages = await prisma.marketingPage.findMany({
+      where: { archived: false },
+      select: {
+        id: true,
+        slug: true,
+        name: true,
+        versions: {
+          where: { published: true },
+          orderBy: { version: "desc" },
+          take: 1,
+          select: { updatedAt: true, version: true },
+        },
+      },
+    });
+    return {
+      pages: pages
+        .filter((p) => p.versions.length > 0)
+        .map((p) => ({
+          slug: p.slug,
+          name: p.name,
+          publishedAt: p.versions[0]!.updatedAt.toISOString(),
+          version: p.versions[0]!.version,
+        })),
+    };
+  });
+
   app.get("/pages/:slug", async (request, reply) => {
     const slug = (request.params as { slug: string }).slug;
     if (!slugRe.test(slug)) {

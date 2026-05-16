@@ -13,7 +13,8 @@ export type PageBlockType =
   | "image"
   | "spacer"
   | "intake_form"
-  | "products_grid";
+  | "products_grid"
+  | "faq";
 
 export interface CtaLink {
   label: string;
@@ -143,6 +144,25 @@ export interface ProductsGridBlock extends Base {
   productSlugs?: string[];
 }
 
+export interface FaqItem {
+  id: string;
+  question: string;
+  answer: string;
+}
+
+/**
+ * Visible FAQ section that ALSO emits FAQPage JSON-LD so Google can
+ * pull individual Q&A pairs straight into search results. LLMs cite
+ * Q&A content disproportionately often, so this is double-duty content.
+ */
+export interface FaqBlock extends Base {
+  type: "faq";
+  eyebrow?: string;
+  title?: string;
+  body?: string;
+  items: FaqItem[];
+}
+
 export type PageBlock =
   | HeroBlock
   | EditorialIntroBlock
@@ -154,7 +174,8 @@ export type PageBlock =
   | ImageBlock
   | SpacerBlock
   | IntakeFormBlock
-  | ProductsGridBlock;
+  | ProductsGridBlock
+  | FaqBlock;
 
 export interface PageSchema {
   version: typeof PAGE_SCHEMA_VERSION;
@@ -173,6 +194,7 @@ const VALID_TYPES: ReadonlySet<string> = new Set<PageBlockType>([
   "spacer",
   "intake_form",
   "products_grid",
+  "faq",
 ]);
 
 /**
