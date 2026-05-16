@@ -26,6 +26,16 @@ import {
   parsePageSchema,
   type PageSchema,
 } from "../lib/page-schema.js";
+import { submitIndexNowAsync } from "../lib/indexnow.js";
+
+function publicAppOrigin(): string {
+  return (
+    process.env.PUBLIC_APP_URL?.replace(/\/$/, "") ??
+    process.env.CLIENT_APP_ORIGIN?.replace(/\/$/, "") ??
+    process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ??
+    "https://momentella.com"
+  );
+}
 
 const slugRe = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 
@@ -390,6 +400,12 @@ export const adminJournalRoutes: FastifyPluginAsync = async (app) => {
         }
         data.body = body.body;
       }
+      const goingPublic =
+        "status" in body &&
+        isStatus(body.status) &&
+        body.status === "published" &&
+        current.status !== "published";
+
       if ("status" in body && isStatus(body.status)) {
         data.status = body.status;
         // First publish stamps publishedAt; later edits don't.
@@ -415,6 +431,16 @@ export const adminJournalRoutes: FastifyPluginAsync = async (app) => {
           },
         },
       });
+      if (goingPublic || article.status === "published") {
+        // Ping IndexNow for any update to a published article so search
+        // engines re-crawl quickly. Fire-and-forget; never blocks.
+        const urls = [
+          `${publicAppOrigin()}/journal/${article.slug}`,
+          `${publicAppOrigin()}/journal`,
+          `${publicAppOrigin()}/sitemap.xml`,
+        ];
+        submitIndexNowAsync(urls, "auto");
+      }
       return { article };
     },
   );

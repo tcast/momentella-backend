@@ -591,6 +591,39 @@ model SocialPostImage {
   @@map("social_post_image")
 }
 
+/// Generic key/value store for sitewide settings. Used today for:
+///   - search-engine verification meta tags (`verify_google`,
+///     `verify_bing`, `verify_yandex`, `verify_pinterest`, `verify_meta`)
+///   - the IndexNow key (`indexnow_key`) used to fast-index new URLs
+///     into Bing / Yandex (which power Copilot, ChatGPT search,
+///     DuckDuckGo, and Naver). Generated once, then stable.
+///   - last-submission timestamps for the SEO dashboard.
+/// Singleton-style — we only ever insert one row per key.
+model SiteSetting {
+  key       String   @id
+  value     String
+  updatedAt DateTime @updatedAt
+  @@map("site_setting")
+}
+
+/// One row per IndexNow submission — a small audit log so admins can
+/// see what URLs have been pushed to Bing recently and whether the
+/// pushes succeeded. Trimmed to the last 100 rows by the route.
+model IndexNowLog {
+  id          String   @id @default(cuid())
+  /// Submitted URLs (JSON string array — easier to scan than a relation).
+  urls        String[]
+  /// HTTP status returned by api.indexnow.org.
+  status      Int
+  /// "auto" (publish hook) | "manual" (admin button).
+  trigger     String   @default("auto")
+  /// Short note — error body when the call failed, etc.
+  message     String?
+  createdAt   DateTime @default(now())
+  @@index([createdAt])
+  @@map("indexnow_log")
+}
+
 /// Journal authors — used as the byline on Article posts. Decoupled
 /// from the `User` table so we can keep author profiles (bio, avatar,
 /// role) editable without conflating them with login accounts. Most

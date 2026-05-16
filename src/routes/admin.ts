@@ -19,6 +19,7 @@ import {
   putObject,
 } from "../lib/object-storage.js";
 import { convertIntakeToTrip } from "../lib/intake-to-trip.js";
+import { submitIndexNowAsync } from "../lib/indexnow.js";
 import { parseItinerarySchema } from "../lib/itinerary-schema.js";
 import {
   PROPOSAL_SCHEMA_VERSION,
@@ -2151,6 +2152,7 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
       };
       const v = await prisma.marketingPageVersion.findFirst({
         where: { id: versionId, pageId },
+        include: { page: { select: { slug: true } } },
       });
       if (!v) return reply.status(404).send({ error: "Not found" });
       await prisma.$transaction([
@@ -2163,6 +2165,26 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
           data: { published: true },
         }),
       ]);
+
+      // Ping IndexNow so Bing / Yandex / Copilot / ChatGPT-search pick
+      // up the new page content within hours instead of weeks. Fire-and-
+      // forget; never blocks the response.
+      const slug = v.page.slug;
+      const origin =
+        process.env.PUBLIC_APP_URL?.replace(/\/$/, "") ??
+        process.env.CLIENT_APP_ORIGIN?.replace(/\/$/, "") ??
+        process.env.NEXT_PUBLIC_APP_URL?.replace(/\/$/, "") ??
+        "https://momentella.com";
+      // For pages that have a canonical clean URL (e.g. "/honeymoons"
+      // rather than "/p/honeymoons") we should ping the canonical.
+      // Otherwise fall back to /p/<slug>. We list both for safety.
+      const urls = [
+        `${origin}/${slug}`,
+        `${origin}/p/${slug}`,
+        `${origin}/sitemap.xml`,
+      ];
+      submitIndexNowAsync(urls, "auto");
+
       return { ok: true };
     },
   );

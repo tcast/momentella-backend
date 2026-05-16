@@ -14,6 +14,7 @@ import { adminRoutes } from "./routes/admin.js";
 import { adminAnalyticsRoutes } from "./routes/admin-analytics.js";
 import { adminJournalRoutes } from "./routes/admin-journal.js";
 import { adminSavedBlocksRoutes } from "./routes/admin-saved-blocks.js";
+import { adminSeoRoutes } from "./routes/admin-seo.js";
 import { adminSocialRoutes } from "./routes/admin-social.js";
 import { clientRoutes } from "./routes/client.js";
 import { publicCommerceRoutes } from "./routes/public-commerce.js";
@@ -119,6 +120,7 @@ export async function buildApp() {
   });
   // /api/admin/articles and /api/admin/authors share one plugin.
   await app.register(adminJournalRoutes, { prefix: "/api/admin" });
+  await app.register(adminSeoRoutes, { prefix: "/api/admin/seo" });
   await app.register(publicIntakeRoutes, { prefix: "/api/public" });
   await app.register(publicCommerceRoutes, { prefix: "/api/public" });
   await app.register(webhookRoutes, { prefix: "/api/webhooks" });

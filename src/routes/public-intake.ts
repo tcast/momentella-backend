@@ -10,6 +10,11 @@ import {
   parseSiteNavConfig,
 } from "../lib/site-nav-schema.js";
 import {
+  getAllSettings,
+  getOrCreateIndexNowKey,
+  SETTING_KEYS,
+} from "../lib/site-settings.js";
+import {
   classifyReferrer,
   resolveGeo,
   getClientIp,
@@ -236,6 +241,29 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
           publishedAt: p.versions[0]!.updatedAt.toISOString(),
           version: p.versions[0]!.version,
         })),
+    };
+  });
+
+  // ─── SEO meta + IndexNow key (public) ────────────────────────────────
+
+  /**
+   * Verification meta tags + the IndexNow key for the public site. The
+   * frontend root layout fetches this once at request time (with ISR
+   * caching) and emits the meta tags into <head>. The IndexNow key is
+   * also exposed here so /.well-known/indexnow.txt can serve it.
+   */
+  app.get("/seo/meta", async () => {
+    const settings = await getAllSettings();
+    const key = await getOrCreateIndexNowKey();
+    return {
+      verifications: {
+        google: settings[SETTING_KEYS.verifyGoogle] ?? null,
+        bing: settings[SETTING_KEYS.verifyBing] ?? null,
+        yandex: settings[SETTING_KEYS.verifyYandex] ?? null,
+        pinterest: settings[SETTING_KEYS.verifyPinterest] ?? null,
+        meta: settings[SETTING_KEYS.verifyMeta] ?? null,
+      },
+      indexNowKey: key,
     };
   });
 
