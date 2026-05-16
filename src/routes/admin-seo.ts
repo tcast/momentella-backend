@@ -68,7 +68,7 @@ export const adminSeoRoutes: FastifyPluginAsync = async (app) => {
       settings,
       indexNow: {
         key,
-        keyFileUrl: `/.well-known/indexnow.txt`,
+        keyFileUrl: `/${key}.txt`,
         lastSuccessfulAt: lastSubmission?.createdAt ?? null,
         recentSubmissions: logs,
       },

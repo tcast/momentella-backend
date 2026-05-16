@@ -28,9 +28,14 @@ function siteOrigin(): string {
   );
 }
 
-/** Where the IndexNow key file is publicly served. Must match the route. */
-function keyLocation(): string {
-  return `${siteOrigin()}/.well-known/indexnow.txt`;
+/**
+ * Where the IndexNow key file is publicly served. Bing's implementation
+ * rejects custom `keyLocation` values reliably; we host at the
+ * spec-default location `/{KEY}.txt` and omit `keyLocation` from the
+ * submission so IndexNow uses its default behaviour.
+ */
+function keyLocation(key: string): string {
+  return `${siteOrigin()}/${key}.txt`;
 }
 
 export interface SubmitResult {
@@ -64,7 +69,7 @@ export async function submitIndexNow(
   const body = {
     host,
     key,
-    keyLocation: keyLocation(),
+    keyLocation: keyLocation(key),
     urlList: valid,
   };
   let status = 0;
