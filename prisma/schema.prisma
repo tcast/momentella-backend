@@ -513,6 +513,20 @@ model SiteNavConfig {
   @@map("site_nav_config")
 }
 
+/// Editable site footer. Same singleton pattern as SiteNavConfig — the
+/// public SiteFooter component and the admin /admin/footer builder
+/// share this row. `config` is a typed JSON blob with tagline / body /
+/// contact + an array of link columns (Trip types, Services, Journal,
+/// etc.) and an array of socials (Instagram, etc.). See
+/// lib/site-footer-schema.ts.
+model SiteFooterConfig {
+  id        String   @id @default("default")
+  config    Json
+  updatedAt DateTime @updatedAt
+
+  @@map("site_footer_config")
+}
+
 /// AI-assisted social media post generator. One row = one piece of
 /// planned content. The generator produces a draft from a brief +
 /// brand-voice system prompt; admins refine inline, then mark ready or

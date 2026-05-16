@@ -10,6 +10,10 @@ import {
   parseSiteNavConfig,
 } from "../lib/site-nav-schema.js";
 import {
+  defaultSiteFooterConfig,
+  parseSiteFooterConfig,
+} from "../lib/site-footer-schema.js";
+import {
   getAllSettings,
   getOrCreateIndexNowKey,
   SETTING_KEYS,
@@ -209,6 +213,19 @@ export const publicIntakeRoutes: FastifyPluginAsync = async (app) => {
     });
     const parsed = row ? parseSiteNavConfig(row.config) : null;
     return { config: parsed ?? defaultSiteNavConfig() };
+  });
+
+  /**
+   * Public, read-only site-footer config. Powers the SiteFooter
+   * component on every page. Cached upstream by Next.js with a short
+   * revalidate so admin edits propagate fast.
+   */
+  app.get("/site-footer", async () => {
+    const row = await prisma.siteFooterConfig.findUnique({
+      where: { id: "default" },
+    });
+    const parsed = row ? parseSiteFooterConfig(row.config) : null;
+    return { config: parsed ?? defaultSiteFooterConfig() };
   });
 
   /**

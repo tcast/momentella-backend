@@ -36,6 +36,10 @@ import {
   parseSiteNavConfig,
 } from "../lib/site-nav-schema.js";
 import {
+  defaultSiteFooterConfig,
+  parseSiteFooterConfig,
+} from "../lib/site-footer-schema.js";
+import {
   BookingKind,
   BookingStatus,
   ProposalStatus,
@@ -1877,6 +1881,38 @@ export const adminRoutes: FastifyPluginAsync = async (app) => {
   app.post("/site-nav/reset", async () => {
     const cfg = defaultSiteNavConfig();
     await prisma.siteNavConfig.upsert({
+      where: { id: "default" },
+      update: { config: cfg as object },
+      create: { id: "default", config: cfg as object },
+    });
+    return { config: cfg };
+  });
+
+  // ── Site footer ──────────────────────────────────────────────────────
+  app.get("/site-footer", async () => {
+    const row = await prisma.siteFooterConfig.findUnique({
+      where: { id: "default" },
+    });
+    const parsed = row ? parseSiteFooterConfig(row.config) : null;
+    return { config: parsed ?? defaultSiteFooterConfig() };
+  });
+
+  app.put("/site-footer", async (request, reply) => {
+    const parsed = parseSiteFooterConfig(request.body);
+    if (!parsed) {
+      return reply.status(400).send({ error: "Invalid footer config" });
+    }
+    const row = await prisma.siteFooterConfig.upsert({
+      where: { id: "default" },
+      update: { config: parsed as object },
+      create: { id: "default", config: parsed as object },
+    });
+    return { config: parsed, updatedAt: row.updatedAt };
+  });
+
+  app.post("/site-footer/reset", async () => {
+    const cfg = defaultSiteFooterConfig();
+    await prisma.siteFooterConfig.upsert({
       where: { id: "default" },
       update: { config: cfg as object },
       create: { id: "default", config: cfg as object },

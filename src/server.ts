@@ -9,6 +9,7 @@ import { seedNicheForms } from "./lib/seed-niche-forms.js";
 import { seedPlaces } from "./lib/seed-places.js";
 import { seedProducts } from "./lib/seed-products.js";
 import { seedDefaultAuthor } from "./lib/seed-author.js";
+import { seedSiteFooter } from "./lib/seed-site-footer.js";
 import { seedSiteNav } from "./lib/seed-site-nav.js";
 import { adminRoutes } from "./routes/admin.js";
 import { adminAnalyticsRoutes } from "./routes/admin-analytics.js";
@@ -151,6 +152,14 @@ void seedSiteNav()
   })
   .catch((err) => {
     app.log.warn({ err }, "site nav seed failed");
+  });
+
+void seedSiteFooter()
+  .then((stats) => {
+    app.log.info({ stats }, "seeded site footer");
+  })
+  .catch((err) => {
+    app.log.warn({ err }, "site footer seed failed");
   });
 
 void seedDefaultAuthor()
